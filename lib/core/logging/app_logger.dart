@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 enum LogLevel { debug, info, warning, error }
 
 final class AppLogger {
-  const AppLogger([this.tag = 'CameraOverlay']);
+  const AppLogger([this.tag = 'Veylora']);
 
   final String tag;
 

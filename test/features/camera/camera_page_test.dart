@@ -5,11 +5,13 @@ import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
 import 'package:camera_overlay/core/theme/app_theme.dart';
 import 'package:camera_overlay/features/camera/presentation/pages/camera_page.dart';
+import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../overlay/overlay_fakes.dart' show FakeSettingsController;
 import 'fakes/fake_camera_platform.dart';
 
 class FakePermissionService implements PermissionService {
@@ -58,6 +60,8 @@ void main() {
         overrides: [
           permissionServiceProvider.overrideWithValue(permissions),
           fileServiceProvider.overrideWithValue(TempFileService(temp)),
+          // The camera screen reads overlay defaults from Settings.
+          settingsControllerProvider.overrideWith(FakeSettingsController.new),
         ],
         child: MaterialApp(theme: AppTheme.dark, home: const CameraPage()),
       ),
@@ -161,6 +165,30 @@ void main() {
       expect(find.byTooltip('Switch to front camera'), findsOneWidget);
     });
 
+    testWidgets('zoom stops jump to a lens and dragging zooms smoothly', (
+      tester,
+    ) async {
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      // The fake reports 1x–8x, so the stops are 1×, 2 and 5.
+      expect(find.text('1×'), findsOneWidget);
+      await tester.tap(find.text('2'));
+      await settle(tester);
+      expect(platform.zoomCalls.last.$2, 2);
+      expect(find.text('2×'), findsOneWidget);
+
+      await tester.drag(
+        find.byKey(const ValueKey<String>('camera-zoom')),
+        const Offset(120, 0),
+      );
+      await settle(tester);
+      expect(platform.zoomCalls.last.$2, greaterThan(3));
+    });
+
     testWidgets('switching to the front camera hides the flash control', (
       tester,
     ) async {
@@ -218,9 +246,14 @@ void main() {
       await settle(tester);
 
       // Capture copies a real file, which needs the real event loop.
+      // Poll rather than sleep a fixed time: it can run long under load.
       await tester.runAsync(() async {
         await tester.tap(shutter);
-        await Future<void>.delayed(const Duration(milliseconds: 200));
+        for (var i = 0; i < 100; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          if (_captureStored(temp)) break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
       });
       await settle(tester);
 
@@ -253,4 +286,12 @@ void main() {
       expect(shutter, findsOneWidget);
     });
   });
+}
+
+/// The controller copies the camera's raw file into place and then deletes
+/// it, so the copy is complete once only the stored photo remains.
+bool _captureStored(Directory dir) {
+  final names = dir.listSync().map((f) => f.path).toList();
+  return names.any((name) => name.contains('overlay_')) &&
+      !names.any((name) => name.contains('raw_'));
 }

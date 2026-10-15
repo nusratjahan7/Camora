@@ -12,6 +12,9 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
     required this.shutterInner,
     required this.guide,
     required this.trackInactive,
+    required this.glassFill,
+    required this.glassBorder,
+    required this.accent,
   });
 
   final Color scrim;
@@ -22,6 +25,15 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
   final Color guide;
   final Color trackInactive;
 
+  /// Tint laid over the blurred preview behind floating controls.
+  final Color glassFill;
+
+  /// Hairline edge that separates glass controls from the preview.
+  final Color glassBorder;
+
+  /// Active state of camera controls (flash on, lock engaged, selection).
+  final Color accent;
+
   static const CameraTheme dark = CameraTheme(
     scrim: AppColors.scrim,
     onScrim: Color(0xFFFFFFFF),
@@ -30,6 +42,9 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
     shutterInner: Color(0xFFFFFFFF),
     guide: AppColors.guide,
     trackInactive: AppColors.trackInactive,
+    glassFill: Color(0x59121216),
+    glassBorder: Color(0x24FFFFFF),
+    accent: AppColors.accent,
   );
 
   static const CameraTheme light = CameraTheme(
@@ -40,6 +55,9 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
     shutterInner: Color(0xFFFFFFFF),
     guide: Color(0x66000000),
     trackInactive: Color(0x33000000),
+    glassFill: Color(0x59121216),
+    glassBorder: Color(0x24FFFFFF),
+    accent: AppColors.accent,
   );
 
   @override
@@ -51,6 +69,9 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
     Color? shutterInner,
     Color? guide,
     Color? trackInactive,
+    Color? glassFill,
+    Color? glassBorder,
+    Color? accent,
   }) {
     return CameraTheme(
       scrim: scrim ?? this.scrim,
@@ -60,6 +81,9 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
       shutterInner: shutterInner ?? this.shutterInner,
       guide: guide ?? this.guide,
       trackInactive: trackInactive ?? this.trackInactive,
+      glassFill: glassFill ?? this.glassFill,
+      glassBorder: glassBorder ?? this.glassBorder,
+      accent: accent ?? this.accent,
     );
   }
 
@@ -77,6 +101,9 @@ class CameraTheme extends ThemeExtension<CameraTheme> {
       guide: Color.lerp(guide, other.guide, t) ?? guide,
       trackInactive:
           Color.lerp(trackInactive, other.trackInactive, t) ?? trackInactive,
+      glassFill: Color.lerp(glassFill, other.glassFill, t) ?? glassFill,
+      glassBorder: Color.lerp(glassBorder, other.glassBorder, t) ?? glassBorder,
+      accent: Color.lerp(accent, other.accent, t) ?? accent,
     );
   }
 }

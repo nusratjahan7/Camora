@@ -12,6 +12,8 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/error_view.dart';
 import '../../../../shared/widgets/loading_view.dart';
+import '../../../overlay/presentation/widgets/overlay_controls.dart';
+import '../../../overlay/presentation/widgets/reference_overlay_layer.dart';
 import '../../domain/camera_errors.dart';
 import '../../domain/camera_session.dart';
 import '../../domain/preview_geometry.dart';
@@ -131,59 +133,70 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final viewport = constraints.biggest;
-          return Stack(
-            fit: StackFit.expand,
-            children: <Widget>[
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: (details) => _focus(details.localPosition, viewport),
-                onScaleStart: (_) => _zoomAtScaleStart = widget.session.zoom,
-                onScaleUpdate: (details) {
-                  if (details.pointerCount < 2) return;
-                  _notifier.setZoom(_zoomAtScaleStart * details.scale);
-                },
-                child: ClipRect(
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    child: SizedBox(
-                      // Any width works: FittedBox rescales, and CameraPreview
-                      // derives its height from the stream's aspect ratio.
-                      width: controller.value.previewSize?.shortestSide ?? 720,
-                      child: CameraPreview(controller),
+          // One backdrop read of the preview shared by every glass control.
+          return BackdropGroup(
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (details) => _focus(details.localPosition, viewport),
+                  onScaleStart: (_) => _zoomAtScaleStart = widget.session.zoom,
+                  onScaleUpdate: (details) {
+                    if (details.pointerCount < 2) return;
+                    _notifier.setZoom(_zoomAtScaleStart * details.scale);
+                  },
+                  child: ClipRect(
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        // Any width works: FittedBox rescales, and CameraPreview
+                        // derives its height from the stream's aspect ratio.
+                        width:
+                            controller.value.previewSize?.shortestSide ?? 720,
+                        child: CameraPreview(controller),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              if (_focusPoint case final point?)
-                _FocusReticle(key: ValueKey<int>(_focusTick), center: point),
-              IgnorePointer(
-                child: AnimatedOpacity(
-                  opacity: _blink ? 1 : 0,
-                  duration: _blinkDuration,
-                  child: const ColoredBox(color: Colors.black),
+                // Above the preview, below the controls: a visual guide only, never
+                // part of the captured photo.
+                ReferenceOverlayLayer(
+                  onTap: (position) => _focus(position, viewport),
                 ),
-              ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: CameraTopBar(
-                  session: session,
-                  onCycleFlash: _notifier.cycleFlashMode,
+                if (_focusPoint case final point?)
+                  _FocusReticle(key: ValueKey<int>(_focusTick), center: point),
+                IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: _blink ? 1 : 0,
+                    duration: _blinkDuration,
+                    child: const ColoredBox(color: Colors.black),
+                  ),
                 ),
-              ),
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: CameraBottomBar(
-                  session: session,
-                  onCapture: _capture,
-                  onSwitchCamera: _notifier.switchCamera,
-                  onZoomChanged: _notifier.setZoom,
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: CameraTopBar(
+                    session: session,
+                    onCycleFlash: _notifier.cycleFlashMode,
+                  ),
                 ),
-              ),
-            ],
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: CameraBottomBar(
+                    session: session,
+                    onCapture: _capture,
+                    onSwitchCamera: _notifier.switchCamera,
+                    onZoomChanged: _notifier.setZoom,
+                    leading: const OverlayPickerButton(),
+                    accessory: const OverlayControlPanel(),
+                  ),
+                ),
+              ],
+            ),
           );
         },
       ),
@@ -249,32 +262,72 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
 class _FocusReticle extends StatelessWidget {
   const _FocusReticle({super.key, required this.center});
 
-  static const double _size = 72;
+  static const double _size = 76;
 
   final Offset center;
 
   @override
   Widget build(BuildContext context) {
+    final accent = context.cameraTheme.accent;
     return Positioned(
       left: center.dx - _size / 2,
       top: center.dy - _size / 2,
       child: IgnorePointer(
         child: TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 1.25, end: 1),
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          builder: (context, scale, child) =>
-              Transform.scale(scale: scale, child: child),
-          child: Container(
-            width: _size,
-            height: _size,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.amberAccent, width: 1.5),
-              borderRadius: BorderRadius.circular(AppSpacing.sm),
-            ),
+          tween: Tween<double>(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutBack,
+          builder: (context, t, child) => Opacity(
+            opacity: t.clamp(0.0, 1.0),
+            child: Transform.scale(scale: 1.35 - 0.35 * t, child: child),
+          ),
+          child: CustomPaint(
+            size: const Size.square(_size),
+            painter: _ReticlePainter(accent),
           ),
         ),
       ),
     );
   }
+}
+
+/// Four corner brackets with a small centre tick, like a camera AF box.
+class _ReticlePainter extends CustomPainter {
+  const _ReticlePainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    const arm = 14.0;
+    final w = size.width;
+    final h = size.height;
+    final corners = <(Offset, Offset, Offset)>[
+      (const Offset(0, arm), Offset.zero, const Offset(arm, 0)),
+      (Offset(w - arm, 0), Offset(w, 0), Offset(w, arm)),
+      (Offset(w, h - arm), Offset(w, h), Offset(w - arm, h)),
+      (Offset(arm, h), Offset(0, h), Offset(0, h - arm)),
+    ];
+    for (final (a, corner, b) in corners) {
+      canvas.drawPath(
+        Path()
+          ..moveTo(a.dx, a.dy)
+          ..lineTo(corner.dx, corner.dy)
+          ..lineTo(b.dx, b.dy),
+        paint,
+      );
+    }
+    final c = size.center(Offset.zero);
+    canvas
+      ..drawLine(c.translate(-4, 0), c.translate(4, 0), paint)
+      ..drawLine(c.translate(0, -4), c.translate(0, 4), paint);
+  }
+
+  @override
+  bool shouldRepaint(_ReticlePainter oldDelegate) => oldDelegate.color != color;
 }

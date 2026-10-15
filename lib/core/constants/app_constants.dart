@@ -1,6 +1,6 @@
 abstract final class AppConstants {
-  static const String appName = 'Camera Overlay';
-  static const String appTagline = 'Line up any shot with a reference image.';
+  static const String appName = 'Veylora';
+  static const String appTagline = 'Create what you envision.';
 
   static const Duration fastAnimation = Duration(milliseconds: 150);
   static const Duration standardAnimation = Duration(milliseconds: 260);

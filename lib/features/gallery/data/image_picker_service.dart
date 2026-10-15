@@ -11,7 +11,12 @@ class ImagePickerService {
   final ImagePicker _picker;
 
   Future<XFile?> pickFromGallery() => errorHandler.guard(
-    () => _picker.pickImage(source: ImageSource.gallery),
+    // Without full metadata iOS uses PHPicker with no photo-library permission
+    // prompt; Android uses the system Photo Picker, which needs none either.
+    () => _picker.pickImage(
+      source: ImageSource.gallery,
+      requestFullMetadata: false,
+    ),
     operation: 'pick reference image',
   );
 }

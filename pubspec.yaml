@@ -1,5 +1,5 @@
 name: camera_overlay
-description: "Camera Overlay - overlay a reference image on the live camera preview."
+description: "Veylora - Create what you envision. Overlay a reference image on the live camera preview."
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -27,3 +27,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/veylora_mark.png

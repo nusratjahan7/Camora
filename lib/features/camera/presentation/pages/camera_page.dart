@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/app_constants.dart';
@@ -44,32 +45,43 @@ class _CameraPageState extends ConsumerState<CameraPage> {
     final permission = ref.watch(cameraPermissionProvider);
     _maybeAutoPrompt(permission);
 
-    // The camera UI is always dark, whatever the app theme.
-    return Theme(
-      data: AppTheme.dark,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: switch (permission) {
-          AsyncValue(isLoading: true) => const CameraStatusFrame(
-            child: LoadingView(message: 'Checking camera permission…'),
-          ),
-          AsyncValue(:final error?, :final stackTrace) => CameraStatusFrame(
-            child: ErrorView(
-              exception: ref
-                  .read(appErrorHandlerProvider)
-                  .map(error, stackTrace ?? StackTrace.empty),
-              onRetry: () => ref.invalidate(cameraPermissionProvider),
+    // The camera UI is always dark, whatever the app theme, and the preview
+    // runs under transparent system bars.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarContrastEnforced: false,
+      ),
+      child: Theme(
+        data: AppTheme.dark,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: switch (permission) {
+            AsyncValue(isLoading: true) => const CameraStatusFrame(
+              child: LoadingView(message: 'Checking camera permission…'),
             ),
-          ),
-          AsyncValue(value: AppPermissionStatus(isGranted: true)) =>
-            const CameraPreviewView(),
-          AsyncValue(:final value) => CameraStatusFrame(
-            child: _PermissionPrompt(
-              status: value ?? AppPermissionStatus.denied,
-              onRequest: _promptForPermission,
+            AsyncValue(:final error?, :final stackTrace) => CameraStatusFrame(
+              child: ErrorView(
+                exception: ref
+                    .read(appErrorHandlerProvider)
+                    .map(error, stackTrace ?? StackTrace.empty),
+                onRetry: () => ref.invalidate(cameraPermissionProvider),
+              ),
             ),
-          ),
-        },
+            AsyncValue(value: AppPermissionStatus(isGranted: true)) =>
+              const CameraPreviewView(),
+            AsyncValue(:final value) => CameraStatusFrame(
+              child: _PermissionPrompt(
+                status: value ?? AppPermissionStatus.denied,
+                onRequest: _promptForPermission,
+              ),
+            ),
+          },
+        ),
       ),
     );
   }

@@ -1,8 +1,13 @@
-# Camera Overlay
+<p align="center"><img src="assets/branding/veylora_icon_256.png" width="128" alt="Veylora logo"></p>
+
+# Veylora
+
+*Create what you envision.*
 
 A Flutter app that lets you line up a shot by floating a reference image from your
 gallery over the device's live camera preview, tuning its opacity, and capturing the
-composite. Built for Android and iOS.
+shot. The reference is only a guide and is never saved into your photos. Built for
+Android and iOS.
 
 > **Module status — foundation only.** This build ships the project skeleton:
 > architecture, theming, routing, error handling, permissions and every native
@@ -175,7 +180,7 @@ sheet explains the reason before the system prompt appears.
 | Permission | When it is requested | Why |
 | --- | --- | --- |
 | Camera | On opening the shooting screen | Show the live preview that the reference image is aligned against. Used only while that screen is open. |
-| Photo library (read) | When choosing a reference image | Select the image to overlay. |
+| Photo library (read) | Never prompted | Reference images come from the system Photo Picker (Android) / PHPicker (iOS), which need no permission. |
 | Photo library (add) | When saving a capture | Write the finished photo back to the gallery. |
 
 Nothing leaves the device — there is no backend, account or analytics.
@@ -253,10 +258,51 @@ permission screens.
 
 ---
 
+## Reference overlay
+
+Tap the gallery button left of the shutter to choose one reference image. It is drawn
+between the live preview and the camera controls, so it can never cover the shutter,
+flash, zoom or switch buttons.
+
+| Control | Behaviour |
+|---|---|
+| Opacity tab | Slider 0–100% with the exact percentage; changing it never moves the image |
+| 25 / 50 / 75 / 100% | Opacity presets; ↺ resets to the default opacity from Settings |
+| Drag / pinch / two-finger twist | Move, resize and rotate (anywhere on the preview while unlocked); rotation snaps to quarter turns within 4° |
+| Frame tab: Fit · Fill · Center | Whole image visible · covers the screen, cropping edges (the only mode that crops) · original pixel size; all keep the aspect ratio |
+| Reset position | Undoes drag, pinch and rotation within the current mode |
+| Lock | Freezes the overlay; camera tap-to-focus and pinch-zoom work again |
+| Eye | Hide / show without losing any settings |
+| Trash | Remove the image and free its memory |
+| Minimize | Tap the handle on top of the tray (or flick it down) to shrink it to a small chip showing the opacity, lock and hidden state; tap the chip (or flick up) to restore it on the same tab |
+
+Notes:
+
+- **The overlay is never part of the photo.** Capture saves exactly what the camera
+  produced; a test compares the saved bytes with the camera output.
+- Images are decoded once at no more than 2048 px on the longest side, so a 48 MP photo
+  costs ~12 MB of GPU memory rather than ~190 MB. EXIF orientation is applied. Unreadable
+  or unsupported files show a message and keep the current image.
+- Position is stored as a fraction of the screen, so it survives rotation. On short
+  (landscape) screens the options start collapsed to the opacity row.
+- While the overlay is unlocked, pinching resizes the overlay; to zoom the camera, tap a
+  lens stop (0.5× / 1× / 2×…) or drag across the zoom pill, or lock the overlay.
+
 ## Not implemented yet (next module)
 
-- Choosing a reference image and rendering it over the preview (`ImagePickerService` and
-  `GallerySaverService` are wired and ready).
-- Opacity, scale, rotation and drag alignment of the overlay (`OverlaySettings` state is
-  in place).
-- Compositing the overlay with the camera frame and saving to the gallery.
+- Saving captures to the device gallery (`GallerySaverService` is wired and ready).
+- Gallery / review screen for captured photos.
+
+## Brand assets
+
+The logo is a "V" made of two layers, an amber arm and a cream arm crossing at
+the vertex, echoing a reference lined up over the live view. Every asset (master
+SVGs in `assets/branding/`, the in-app mark, Android legacy/adaptive/themed
+launcher icons, the iOS AppIcon set and both launch screens) is generated from one
+definition:
+
+```bash
+pip install pillow
+python tool/brand/generate_brand_assets.py
+```
+

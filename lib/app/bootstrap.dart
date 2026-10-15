@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logging/app_logger.dart';
@@ -11,6 +12,8 @@ void bootstrap() {
   runZonedGuarded(
     () {
       WidgetsFlutterBinding.ensureInitialized();
+      // Draw behind the system bars; screens handle insets with SafeArea.
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
       const logger = AppLogger();
 

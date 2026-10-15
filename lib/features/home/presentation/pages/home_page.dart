@@ -8,6 +8,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/app_scaffold.dart';
+import '../../../../shared/widgets/brand_mark.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -27,21 +28,13 @@ class HomePage extends ConsumerWidget {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: 0.16),
-                      borderRadius: AppRadius.mdAll,
-                    ),
-                    child: Icon(Icons.layers_outlined, color: scheme.primary),
-                  ),
+                  const BrandMark(size: 44),
                   const SizedBox(width: AppSpacing.md),
                   Text(AppConstants.appName, style: text.titleLarge),
                 ],
               ),
               const Spacer(),
-              Text('Shoot through your reference.', style: text.displaySmall),
+              Text(AppConstants.appTagline, style: text.displaySmall),
               const SizedBox(height: AppSpacing.md),
               Text(
                 'Pick an image from your gallery, float it over the live camera '
@@ -63,8 +56,8 @@ class HomePage extends ConsumerWidget {
               ),
               const Spacer(),
               Text(
-                'Foundation build — overlay alignment and capture arrive in '
-                'the next module.',
+                'The reference image is only a guide: it is never saved into '
+                'your photos.',
                 style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
             ],

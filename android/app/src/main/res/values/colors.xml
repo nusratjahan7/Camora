@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Veylora ink; matches AppColors.ink. -->
+    <color name="veylora_ink">#0A0A0C</color>
+</resources>
