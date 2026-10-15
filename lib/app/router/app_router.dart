@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../core/errors/app_error_handler.dart';
 import '../../core/errors/app_exception.dart';
 import '../../features/camera/presentation/pages/camera_page.dart';
+import '../../features/capture/domain/captured_photo.dart';
+import '../../features/capture/presentation/pages/capture_review_page.dart';
 import '../../features/home/presentation/pages/home_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
 import '../../shared/widgets/error_view.dart';
@@ -27,6 +29,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.camera,
         name: AppRoutes.cameraName,
         builder: (context, state) => const CameraPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.review,
+        name: AppRoutes.reviewName,
+        // The photo travels in memory; without it (e.g. a restored route)
+        // there is nothing to review.
+        redirect: (context, state) =>
+            state.extra is CapturedPhoto ? null : AppRoutes.camera,
+        builder: (context, state) =>
+            CaptureReviewPage(photo: state.extra! as CapturedPhoto),
       ),
       GoRoute(
         path: AppRoutes.settings,

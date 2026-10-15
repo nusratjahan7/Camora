@@ -26,7 +26,7 @@ final class AppErrorHandler {
 
     if (error is GalException) {
       return GallerySaveFailure(
-        'The photo could not be saved to your gallery.',
+        _galleryMessage(error),
         cause: error,
         stackTrace: stackTrace,
       );
@@ -82,6 +82,17 @@ final class AppErrorHandler {
       throw map(error, stackTrace);
     }
   }
+
+  String _galleryMessage(GalException error) => switch (error.type) {
+    GalExceptionType.accessDenied =>
+      'Permission to save photos was denied. Allow it in system settings.',
+    GalExceptionType.notEnoughSpace =>
+      'There is not enough storage space to save the photo.',
+    GalExceptionType.notSupportedFormat =>
+      'This photo format cannot be saved to your gallery.',
+    GalExceptionType.unexpected =>
+      'The photo could not be saved to your gallery.',
+  };
 
   String _cameraMessage(CameraException error) => switch (error.code) {
     'CameraAccessDenied' ||

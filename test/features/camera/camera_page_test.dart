@@ -3,15 +3,15 @@ import 'dart:io';
 import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
-import 'package:camera_overlay/core/theme/app_theme.dart';
-import 'package:camera_overlay/features/camera/presentation/pages/camera_page.dart';
+import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../overlay/overlay_fakes.dart' show FakeSettingsController;
+import '../../helpers/camera_test_app.dart';
+import '../../helpers/fake_gallery.dart';
 import 'fakes/fake_camera_platform.dart';
 
 class FakePermissionService implements PermissionService {
@@ -42,11 +42,13 @@ class FakePermissionService implements PermissionService {
 void main() {
   late Directory temp;
   late FakeCameraPlatform platform;
+  late FakeGallerySaver gallery;
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('camera_page_test');
     platform = FakeCameraPlatform(captureDirectory: temp);
     CameraPlatform.instance = platform;
+    gallery = FakeGallerySaver();
   });
 
   tearDown(() => temp.deleteSync(recursive: true));
@@ -55,16 +57,15 @@ void main() {
     WidgetTester tester,
     FakePermissionService permissions,
   ) {
-    return tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          permissionServiceProvider.overrideWithValue(permissions),
-          fileServiceProvider.overrideWithValue(TempFileService(temp)),
-          // The camera screen reads overlay defaults from Settings.
-          settingsControllerProvider.overrideWith(FakeSettingsController.new),
-        ],
-        child: MaterialApp(theme: AppTheme.dark, home: const CameraPage()),
-      ),
+    return pumpCameraApp(
+      tester,
+      overrides: [
+        permissionServiceProvider.overrideWithValue(permissions),
+        fileServiceProvider.overrideWithValue(TempFileService(temp)),
+        gallerySaverServiceProvider.overrideWithValue(gallery),
+        // The camera screen reads overlay defaults from Settings.
+        settingsControllerProvider.overrideWith(FakeSettingsController.new),
+      ],
     );
   }
 
@@ -238,15 +239,13 @@ void main() {
       );
     });
 
-    testWidgets('capturing confirms with a snackbar', (tester) async {
+    Future<void> captureToReview(WidgetTester tester) async {
       await pumpPage(
         tester,
         FakePermissionService(AppPermissionStatus.granted),
       );
       await settle(tester);
-
       // Capture copies a real file, which needs the real event loop.
-      // Poll rather than sleep a fixed time: it can run long under load.
       await tester.runAsync(() async {
         await tester.tap(shutter);
         for (var i = 0; i < 100; i++) {
@@ -256,9 +255,81 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       });
       await settle(tester);
+      expect(find.byKey(const ValueKey<String>('review-save')), findsOneWidget);
+    }
 
+    String storedPhoto() => temp
+        .listSync()
+        .map((f) => f.path)
+        .firstWhere((path) => path.contains('Veylora_'));
+
+    testWidgets('capture opens the review with the camera released; Save '
+        'stores the original byte for byte', (tester) async {
+      await captureToReview(tester);
       expect(platform.captureCount, 1);
-      expect(find.text('Photo captured'), findsOneWidget);
+      expect(platform.liveCameras, isEmpty);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey<String>('review-save')));
+        for (var i = 0; i < 50 && gallery.saved.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      });
+      await settle(tester);
+
+      expect(gallery.saved.single, platform.pictureBytes);
+      expect(find.text('Saved to Gallery'), findsOneWidget);
+      expect(find.text('Saved'), findsOneWidget);
+
+      // Saved, so closing needs no confirmation; the camera reopens.
+      await tester.tap(find.byKey(const ValueKey<String>('review-close')));
+      await settle(tester);
+      expect(shutter, findsOneWidget);
+      expect(platform.liveCameras, hasLength(1));
+    });
+
+    testWidgets('Retake deletes the photo and returns to the camera', (
+      tester,
+    ) async {
+      await captureToReview(tester);
+      final path = storedPhoto();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey<String>('review-retake')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await settle(tester);
+
+      expect(shutter, findsOneWidget);
+      expect(File(path).existsSync(), isFalse);
+      expect(gallery.saved, isEmpty);
+    });
+
+    testWidgets('closing an unsaved photo asks before discarding it', (
+      tester,
+    ) async {
+      await captureToReview(tester);
+
+      await tester.tap(find.byKey(const ValueKey<String>('review-close')));
+      await settle(tester);
+      expect(find.text('Discard this photo?'), findsOneWidget);
+
+      await tester.tap(find.text('Keep'));
+      await settle(tester);
+      expect(find.byKey(const ValueKey<String>('review-save')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey<String>('review-discard')));
+      await settle(tester);
+      await tester.runAsync(() async {
+        await tester.tap(
+          find.byKey(const ValueKey<String>('review-confirm-discard')),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await settle(tester);
+
+      expect(shutter, findsOneWidget);
+      expect(gallery.saved, isEmpty);
     });
 
     testWidgets('releases the camera in the background and reopens it', (
@@ -292,6 +363,6 @@ void main() {
 /// it, so the copy is complete once only the stored photo remains.
 bool _captureStored(Directory dir) {
   final names = dir.listSync().map((f) => f.path).toList();
-  return names.any((name) => name.contains('overlay_')) &&
+  return names.any((name) => name.contains('Veylora_')) &&
       !names.any((name) => name.contains('raw_'));
 }

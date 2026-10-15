@@ -95,6 +95,10 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
   bool _active = false;
   bool _building = false;
   bool _paused = false;
+
+  /// Set while another screen (photo review) covers the camera: the camera
+  /// stays released even if the app comes back to the foreground.
+  bool _held = false;
   bool _capturing = false;
   bool _switching = false;
   bool _changingFlash = false;
@@ -318,6 +322,23 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
 
   /// The camera is an exclusive resource: release it whenever the app is not
   /// in the foreground and reopen the same lens when it returns.
+  /// Releases the camera while another screen covers it.
+  Future<void> hold() async {
+    _held = true;
+    await _pause();
+  }
+
+  /// Reopens the camera after [hold], unless the app is in the background
+  /// (it then reopens on the next resume).
+  Future<void> releaseHold() async {
+    if (!_held) return;
+    _held = false;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+      await _resume();
+    }
+  }
+
   Future<void> handleAppLifecycle(AppLifecycleState lifecycle) async {
     switch (lifecycle) {
       case AppLifecycleState.resumed:
@@ -508,7 +529,7 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
   }
 
   Future<void> _resume() async {
-    if (!_paused || !_isActive) return;
+    if (!_paused || !_isActive || _held) return;
     _paused = false;
 
     final waiter = _resumed;

@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
-import 'package:camera_overlay/core/theme/app_theme.dart';
 import 'package:camera_overlay/features/camera/presentation/pages/camera_page.dart';
+import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart';
 import 'package:camera_overlay/features/gallery/data/image_picker_service.dart';
 import 'package:camera_overlay/features/overlay/domain/overlay_fit_mode.dart';
 import 'package:camera_overlay/features/overlay/domain/overlay_settings.dart';
@@ -18,8 +18,11 @@ import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 import '../camera/camera_page_test.dart' show FakePermissionService;
+import '../../helpers/camera_test_app.dart';
+import '../../helpers/fake_gallery.dart';
 import '../camera/fakes/fake_camera_platform.dart';
 import 'overlay_fakes.dart';
 
@@ -28,12 +31,14 @@ void main() {
   late FakeCameraPlatform platform;
   late FakeImagePickerService picker;
   late Uint8List referencePng;
+  late FakeGallerySaver gallery;
 
   setUp(() async {
     temp = Directory.systemTemp.createTempSync('overlay_camera_test');
     platform = FakeCameraPlatform(captureDirectory: temp);
     CameraPlatform.instance = platform;
     picker = FakeImagePickerService();
+    gallery = FakeGallerySaver();
   });
 
   tearDown(() => temp.deleteSync(recursive: true));
@@ -60,18 +65,17 @@ void main() {
     await tester.runAsync(() async => referencePng = await pngBytes(30, 40));
     picker.queueImage(referencePng);
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          permissionServiceProvider.overrideWithValue(
-            FakePermissionService(AppPermissionStatus.granted),
-          ),
-          fileServiceProvider.overrideWithValue(TempFileService(temp)),
-          imagePickerServiceProvider.overrideWithValue(picker),
-          settingsControllerProvider.overrideWith(FakeSettingsController.new),
-        ],
-        child: MaterialApp(theme: AppTheme.dark, home: const CameraPage()),
-      ),
+    await pumpCameraApp(
+      tester,
+      overrides: [
+        permissionServiceProvider.overrideWithValue(
+          FakePermissionService(AppPermissionStatus.granted),
+        ),
+        fileServiceProvider.overrideWithValue(TempFileService(temp)),
+        imagePickerServiceProvider.overrideWithValue(picker),
+        gallerySaverServiceProvider.overrideWithValue(gallery),
+        settingsControllerProvider.overrideWith(FakeSettingsController.new),
+      ],
     );
     await settle(tester);
 
@@ -319,12 +323,13 @@ void main() {
     expect(settings(tester).offset, Offset.zero);
   });
 
-  testWidgets('the shutter works over an editable overlay and is not burned '
-      'into the photo', (tester) async {
+  testWidgets('the shutter works over an editable overlay; the saved photo '
+      'is the camera image only, and Save composite is a separate export', (
+    tester,
+  ) async {
     await openWithOverlay(tester);
     expect(settings(tester).isLocked, isFalse);
 
-    late List<int> saved;
     await tester.runAsync(() async {
       await tester.tap(byKey('camera-shutter'));
       final dir = await TempFileService(temp).capturesDirectory();
@@ -332,15 +337,42 @@ void main() {
         if (_captureStored(dir)) break;
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
-      final photo = dir.listSync().whereType<File>().firstWhere(
-        (file) => file.path.contains('overlay_'),
-      );
-      saved = photo.readAsBytesSync();
     });
-
+    await settle(tester);
     expect(platform.captureCount, 1);
-    // Exactly the bytes the camera produced: no overlay composited in.
-    expect(saved, const <int>[0xFF, 0xD8, 0xFF, 0xD9]);
+    expect(byKey('review-composite-tab'), findsOneWidget);
+
+    // Save: exactly the bytes the camera produced, no overlay composited in.
+    await tester.runAsync(() async {
+      await tester.tap(byKey('review-save'));
+      for (var i = 0; i < 50 && gallery.saved.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    });
+    await settle(tester);
+    expect(gallery.saved.single, platform.pictureBytes);
+
+    // Save composite: rendered at the photo's own resolution.
+    await tester.tap(byKey('review-composite-tab'));
+    await tester.runAsync(() async {
+      for (var i = 0; i < 100; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump();
+        if (byKey('review-composite').evaluate().isNotEmpty) break;
+      }
+      await tester.tap(byKey('review-save'));
+      for (var i = 0; i < 100 && gallery.saved.length < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    });
+    await settle(tester);
+
+    expect(gallery.saved, hasLength(2));
+    final composite = img.decodeJpg(Uint8List.fromList(gallery.saved[1]))!;
+    expect(composite.width, 54);
+    expect(composite.height, 96);
+    expect(gallery.saved[1], isNot(platform.pictureBytes));
+    expect(find.text('Composite saved to Gallery'), findsOneWidget);
   });
 
   testWidgets('hide, show and remove', (tester) async {

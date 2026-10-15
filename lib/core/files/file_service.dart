@@ -16,9 +16,15 @@ base class FileService {
     return directory;
   }
 
-  Future<File> createCaptureFile({String extension = 'jpg'}) async {
+  /// A new file in the captures directory. The name becomes the photo's name
+  /// in the system gallery, e.g. `Veylora_1760512345678.jpg`.
+  Future<File> createCaptureFile({
+    String prefix = 'Veylora',
+    String extension = 'jpg',
+  }) async {
     final directory = await capturesDirectory();
-    final name = 'overlay_${DateTime.now().millisecondsSinceEpoch}.$extension';
+    final name =
+        '${prefix}_${DateTime.now().millisecondsSinceEpoch}.$extension';
     return File(p.join(directory.path, name));
   }
 

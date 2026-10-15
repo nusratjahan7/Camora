@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:flutter/widgets.dart';
+import 'package:image/image.dart' as img;
 
 const CameraDescription rearCamera = CameraDescription(
   name: 'rear',
@@ -57,6 +58,16 @@ class FakeCameraPlatform extends CameraPlatform {
   final List<(int, Point<double>?)> focusPoints = <(int, Point<double>?)>[];
   final List<(int, Point<double>?)> exposurePoints = <(int, Point<double>?)>[];
   int captureCount = 0;
+
+  /// What every capture writes: a real 9:16 portrait JPEG, matching the
+  /// 1920x1080 preview stream, so composites can be rendered from it.
+  final List<int> pictureBytes = img.encodeJpg(
+    img.fill(
+      img.Image(width: 54, height: 96),
+      color: img.ColorRgb8(40, 90, 140),
+    ),
+    quality: 90,
+  );
 
   final Map<int, StreamController<CameraInitializedEvent>> _initEvents =
       <int, StreamController<CameraInitializedEvent>>{};
@@ -136,7 +147,7 @@ class FakeCameraPlatform extends CameraPlatform {
     final file = File(
       '${captureDirectory.path}${Platform.pathSeparator}raw_$captureCount.jpg',
     );
-    await file.writeAsBytes(const <int>[0xFF, 0xD8, 0xFF, 0xD9]);
+    await file.writeAsBytes(pictureBytes);
     return XFile(file.path);
   }
 
