@@ -6,28 +6,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Thin seam over `package:camera` so controllers never talk to the plugin
 /// directly and the lifecycle stays testable.
 class CameraService {
-  const CameraService({this.resolutionPreset = ResolutionPreset.high});
+  const CameraService({this.resolutionPreset = ResolutionPreset.veryHigh});
 
-  /// Stills are captured at ~720p: sharp enough for an overlay composite while
-  /// keeping the preview at a responsive frame rate on mid-range devices.
+  /// ~1080p: detailed enough for an overlay composite, while the preview (which
+  /// shares the preset) stays at full frame rate on mid-range devices. `max`
+  /// would push 12MP+ frames through the preview pipeline for no visible gain.
   final ResolutionPreset resolutionPreset;
 
   Future<List<CameraDescription>> listCameras() => availableCameras();
 
   CameraController createController(CameraDescription description) {
-    return CameraController(
-      description,
-      resolutionPreset,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.jpeg,
-    );
+    return CameraController(description, resolutionPreset, enableAudio: false);
   }
 
-  Future<void> initialize(CameraController controller) => controller.initialize();
+  Future<void> initialize(CameraController controller) =>
+      controller.initialize();
 
   Future<void> dispose(CameraController controller) => controller.dispose();
 
-  Future<XFile> capture(CameraController controller) => controller.takePicture();
+  Future<XFile> capture(CameraController controller) =>
+      controller.takePicture();
 
   Future<void> setFlashMode(CameraController controller, FlashMode mode) =>
       controller.setFlashMode(mode);
@@ -46,6 +44,9 @@ class CameraService {
 
   Future<void> setFocusPoint(CameraController controller, Offset point) =>
       controller.setFocusPoint(point);
+
+  Future<void> setExposurePoint(CameraController controller, Offset point) =>
+      controller.setExposurePoint(point);
 
   Future<void> resetFocusPoint(CameraController controller) =>
       controller.setFocusPoint(null);

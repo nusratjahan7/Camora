@@ -26,8 +26,8 @@ enum CameraFlashMode {
   ];
 }
 
-const List<CameraFlashMode> _flashCycleWithoutTorch = CameraFlashMode
-    .withoutTorch;
+const List<CameraFlashMode> _flashCycleWithoutTorch =
+    CameraFlashMode.withoutTorch;
 const List<CameraFlashMode> _flashCycleWithTorch = CameraFlashMode.withTorch;
 
 CameraFlashMode nextFlashMode(

@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-final class FileService {
+base class FileService {
   const FileService();
 
   Future<Directory> capturesDirectory() async {

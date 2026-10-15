@@ -18,8 +18,8 @@ composite. Built for Android and iOS.
 | --- | --- |
 | Flutter | 3.44.6 (stable) |
 | Dart | 3.12.2 |
-| Android SDK | platform **android-37**, build-tools 37.0.0, `minSdk 24` |
-| Xcode (iOS) | 15+ on macOS, deployment target 12.0 |
+| Android SDK | platform **android-37.0**, NDK 28.2.13676358, CMake 3.22.1, build-tools 37.0.0, `minSdk 24` |
+| Xcode (iOS) | 15+ on macOS, deployment target 13.0 (required by `camera_avfoundation`) |
 
 Dependencies (latest mutually compatible stable releases, resolved by `flutter pub`):
 
@@ -99,13 +99,18 @@ flutter doctor -v
    `compileSdk = 37`. Install both:
 
    ```bash
-   sdkmanager "platforms;android-37" "ndk;28.2.13676358"
+   sdkmanager "platforms;android-37.0" "ndk;28.2.13676358" "cmake;3.22.1"
    flutter doctor --android-licenses   # accept any pending licenses
    ```
 
    The Android SDK directory must be writable by your user (`sdk.dir` in
    `android/local.properties`); otherwise Gradle cannot auto-install missing components
-   and the build fails with `The SDK directory is not writable`.
+   and the build fails with `The SDK directory is not writable`. If the SDK lives in a
+   shared, admin-only folder, run `sdkmanager` from an elevated prompt.
+
+   If Kotlin fails with `Could not close incremental caches` (the project and the pub
+   cache are on different drives on Windows), add `kotlin.incremental=false` to your
+   user-level `~/.gradle/gradle.properties`.
 
 2. Start a device or emulator, then run:
 
@@ -140,6 +145,25 @@ flutter build ios --release              # archive-ready build
 
 To ship: open `ios/Runner.xcworkspace` in Xcode, set your signing team, then
 **Product → Archive**.
+
+### Testing the camera on an iPhone
+
+The iOS Simulator has no camera, so the camera module must be tested on a device.
+
+1. Connect the iPhone, trust the Mac, and enable **Developer Mode**
+   (Settings → Privacy & Security).
+2. In Xcode, select the **Runner** target → *Signing & Capabilities* → choose your team.
+3. `flutter run -d <iphone-id>`, open the camera, and check:
+   - the rationale sheet appears before the system camera prompt;
+   - denying, then reopening the screen shows **Camera access is blocked** with
+     *Open settings* (iOS never re-prompts after a denial); enabling access in Settings
+     and returning shows the preview without restarting;
+   - rear camera by default; switching to the front camera hides the flash button;
+   - flash cycles off → auto → on → torch on the rear camera; pinch and the slider zoom;
+     tapping the preview shows the focus reticle;
+   - rapid shutter taps capture one photo at a time;
+   - Control Center / app switcher releases the camera (green indicator goes off) and
+     returning reopens it.
 
 ---
 
@@ -195,8 +219,12 @@ rm -rf ~/Library/Developer/Xcode/DerivedData
 
 ## Architecture notes
 
-- **State management** — Riverpod 3. Camera lifecycle uses an `AsyncNotifier` with
-  `autoDispose`, so the camera is released when the preview is disposed. Settings use a
+- **State management** — Riverpod 3. `CameraSessionController` (an auto-dispose
+  `AsyncNotifier`) owns the `CameraController`: it opens the rear camera by default,
+  releases it when the app leaves the foreground and reopens the same lens on return,
+  guards against overlapping captures, and coalesces zoom calls. Widgets never touch the
+  plugin; `CameraService` is the only seam over `package:camera`. Camera providers opt
+  out of Riverpod's automatic retry, so failures surface once with an explicit retry. Settings use a
   keep-alive `AsyncNotifier` with optimistic updates.
 - **Routing** — a single `GoRouter` provided by `appRouterProvider`, with a shared
   `errorBuilder` for unknown routes.
@@ -217,6 +245,11 @@ rm -rf ~/Library/Developer/Xcode/DerivedData
 flutter analyze     # static analysis — expects zero issues
 flutter test        # unit + widget tests
 ```
+
+Camera tests drive the real `CameraController` against an in-memory
+`CameraPlatform` fake (`test/features/camera/fakes`), covering default lens selection,
+switching, capture concurrency, lifecycle release/reopen, error states and the
+permission screens.
 
 ---
 

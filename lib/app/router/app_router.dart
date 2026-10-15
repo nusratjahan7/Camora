@@ -34,19 +34,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const SettingsPage(),
       ),
     ],
-    onException: (context, state, router) {
-      errorHandler.report(
-        RouteFailure('No screen matches "${state.uri}".'),
-        StackTrace.current,
-        operation: 'navigate',
+    // go_router accepts only one of onException / errorBuilder, so the
+    // failure is reported from the builder.
+    errorBuilder: (context, state) {
+      final failure = RouteFailure('No screen matches "${state.uri}".');
+      errorHandler.report(failure, StackTrace.current, operation: 'navigate');
+      return Scaffold(
+        body: SafeArea(child: ErrorView(exception: failure)),
       );
     },
-    errorBuilder: (context, state) => Scaffold(
-      body: SafeArea(
-        child: ErrorView(
-          exception: RouteFailure('No screen matches "${state.uri}".'),
-        ),
-      ),
-    ),
   );
 });

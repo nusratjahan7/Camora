@@ -1,41 +1,73 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../../../app/router/app_routes.dart';
 import '../../../../core/errors/app_error_handler.dart';
+import '../../../../core/errors/app_exception.dart';
+import '../../../../core/permissions/permission_service.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
-import '../../../../shared/widgets/app_icon_button.dart';
 import '../../../../shared/widgets/error_view.dart';
 import '../../../../shared/widgets/loading_view.dart';
+import '../../domain/camera_errors.dart';
+import '../../domain/camera_session.dart';
+import '../../domain/preview_geometry.dart';
 import '../providers/camera_providers.dart';
+import 'camera_controls.dart';
 
 class CameraPreviewView extends ConsumerWidget {
   const CameraPreviewView({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final controllerAsync = ref.watch(cameraControllerProvider);
+    final session = ref.watch(cameraSessionProvider);
 
-    return controllerAsync.when(
-      loading: () => const LoadingView(message: 'Starting the camera…'),
-      error: (error, stackTrace) => Center(
+    // Loading is checked first on purpose: while reloading, Riverpod still
+    // carries the previous session, whose controller is already released.
+    if (session.isLoading) {
+      return const CameraStatusFrame(
+        child: LoadingView(message: 'Starting the camera…'),
+      );
+    }
+
+    if (session.hasError) {
+      final failure = ref
+          .read(appErrorHandlerProvider)
+          .map(session.error!, session.stackTrace ?? StackTrace.empty);
+      return CameraStatusFrame(
         child: ErrorView(
-          exception: ref.read(appErrorHandlerProvider).map(error, stackTrace),
-          onRetry: () => ref.invalidate(cameraControllerProvider),
+          exception: failure,
+          onRetry: () {
+            ref.invalidate(camerasProvider);
+            ref.invalidate(cameraSessionProvider);
+          },
+          onOpenSettings: isCameraAccessDenied(failure)
+              ? () => ref.read(permissionServiceProvider).openSettings()
+              : null,
         ),
-      ),
-      data: (controller) => _Preview(controller: controller),
-    );
+      );
+    }
+
+    final value = session.value;
+    if (value == null) {
+      return const CameraStatusFrame(
+        child: LoadingView(message: 'Starting the camera…'),
+      );
+    }
+
+    return _CameraViewport(key: ObjectKey(value.controller), session: value);
   }
 }
 
-class _Preview extends StatelessWidget {
-  const _Preview({required this.controller});
+/// Black backdrop with a close button, so non-preview states never trap the
+/// user on the camera screen.
+class CameraStatusFrame extends StatelessWidget {
+  const CameraStatusFrame({super.key, required this.child});
 
-  final CameraController controller;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
@@ -44,147 +76,202 @@ class _Preview extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          Center(
-            child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio,
-              child: CameraPreview(controller),
+          child,
+          const Positioned(
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: EdgeInsets.all(AppSpacing.sm),
+                child: CameraCloseButton(),
+              ),
             ),
           ),
-          const Positioned(top: 0, left: 0, right: 0, child: _TopBar()),
-          const Positioned(bottom: 0, left: 0, right: 0, child: _BottomBar()),
         ],
       ),
     );
   }
 }
 
-class _TopBar extends StatelessWidget {
-  const _TopBar();
+class _CameraViewport extends ConsumerStatefulWidget {
+  const _CameraViewport({super.key, required this.session});
+
+  final CameraSession session;
+
+  @override
+  ConsumerState<_CameraViewport> createState() => _CameraViewportState();
+}
+
+class _CameraViewportState extends ConsumerState<_CameraViewport> {
+  static const Duration _reticleDuration = Duration(milliseconds: 900);
+  static const Duration _blinkDuration = Duration(milliseconds: 90);
+
+  Offset? _focusPoint;
+  int _focusTick = 0;
+  Timer? _reticleTimer;
+  bool _blink = false;
+  double _zoomAtScaleStart = 1.0;
+
+  CameraSessionController get _notifier =>
+      ref.read(cameraSessionProvider.notifier);
+
+  @override
+  void dispose() {
+    _reticleTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cameraTheme = context.cameraTheme;
+    final session = widget.session;
+    final controller = session.controller;
 
-    return Container(
-      color: cameraTheme.scrim,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.sm,
-            vertical: AppSpacing.xs,
-          ),
-          child: Row(
+    return ColoredBox(
+      color: Colors.black,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final viewport = constraints.biggest;
+          return Stack(
+            fit: StackFit.expand,
             children: <Widget>[
-              AppIconButton(
-                icon: Icons.close,
-                tooltip: 'Close camera',
-                color: cameraTheme.onScrim,
-                onPressed: () {
-                  if (context.canPop()) {
-                    context.pop();
-                  } else {
-                    context.go(AppRoutes.home);
-                  }
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: (details) => _focus(details.localPosition, viewport),
+                onScaleStart: (_) => _zoomAtScaleStart = widget.session.zoom,
+                onScaleUpdate: (details) {
+                  if (details.pointerCount < 2) return;
+                  _notifier.setZoom(_zoomAtScaleStart * details.scale);
                 },
+                child: ClipRect(
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      // Any width works: FittedBox rescales, and CameraPreview
+                      // derives its height from the stream's aspect ratio.
+                      width: controller.value.previewSize?.shortestSide ?? 720,
+                      child: CameraPreview(controller),
+                    ),
+                  ),
+                ),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              Text(
-                'Live preview',
-                style: context.textStyles.titleMedium?.copyWith(
-                  color: cameraTheme.onScrim,
+              if (_focusPoint case final point?)
+                _FocusReticle(key: ValueKey<int>(_focusTick), center: point),
+              IgnorePointer(
+                child: AnimatedOpacity(
+                  opacity: _blink ? 1 : 0,
+                  duration: _blinkDuration,
+                  child: const ColoredBox(color: Colors.black),
+                ),
+              ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: CameraTopBar(
+                  session: session,
+                  onCycleFlash: _notifier.cycleFlashMode,
+                ),
+              ),
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: CameraBottomBar(
+                  session: session,
+                  onCapture: _capture,
+                  onSwitchCamera: _notifier.switchCamera,
+                  onZoomChanged: _notifier.setZoom,
                 ),
               ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }
-}
 
-class _BottomBar extends ConsumerWidget {
-  const _BottomBar();
+  Future<void> _focus(Offset position, Size viewport) async {
+    final session = widget.session;
+    if (!session.capabilities.supportsTapToFocus) return;
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final cameraTheme = context.cameraTheme;
-    final cameras =
-        ref.watch(camerasProvider).value ?? const <CameraDescription>[];
-    final canSwitch = cameras.length > 1;
+    final value = session.controller.value;
+    if (!value.isInitialized || value.previewSize == null) return;
 
-    return Container(
-      color: cameraTheme.scrim,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text(
-                'The preview is live. Choosing a reference image, tuning the '
-                'overlay and capturing arrive in the next module.',
-                textAlign: TextAlign.center,
-                style: context.textStyles.bodySmall?.copyWith(
-                  color: cameraTheme.onScrim.withValues(alpha: 0.75),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: <Widget>[
-                  AppIconButton(
-                    icon: Icons.photo_library_outlined,
-                    tooltip: 'Choose reference image (next module)',
-                    color: cameraTheme.onScrim,
-                  ),
-                  const _ShutterButton(),
-                  AppIconButton(
-                    icon: Icons.cameraswitch_outlined,
-                    tooltip: 'Switch camera',
-                    color: cameraTheme.onScrim,
-                    onPressed: canSwitch
-                        ? () => ref
-                              .read(cameraControllerProvider.notifier)
-                              .switchCamera()
-                        : null,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+    final point = coverPointToPreview(
+      point: position,
+      viewport: viewport,
+      preview: Size(_displayAspectRatio(value), 1),
     );
+    if (point == null) return;
+
+    setState(() {
+      _focusPoint = position;
+      _focusTick++;
+    });
+    _reticleTimer?.cancel();
+    _reticleTimer = Timer(_reticleDuration, () {
+      if (mounted) setState(() => _focusPoint = null);
+    });
+
+    await _notifier.focusAt(point);
+  }
+
+  Future<void> _capture() async {
+    unawaited(HapticFeedback.lightImpact());
+    setState(() => _blink = true);
+    Future<void>.delayed(_blinkDuration * 2, () {
+      if (mounted) setState(() => _blink = false);
+    });
+
+    try {
+      final file = await _notifier.capture();
+      if (file != null && mounted) context.showAppSnackBar('Photo captured');
+    } on AppException catch (failure) {
+      if (mounted) context.showAppSnackBar(failure.message);
+    }
+  }
+
+  /// Mirrors how [CameraPreview] orients the stream, so tap coordinates match
+  /// what is on screen.
+  static double _displayAspectRatio(CameraValue value) {
+    final orientation = value.isRecordingVideo
+        ? value.recordingOrientation
+        : value.previewPauseOrientation ??
+              value.lockedCaptureOrientation ??
+              value.deviceOrientation;
+    final landscape =
+        orientation == DeviceOrientation.landscapeLeft ||
+        orientation == DeviceOrientation.landscapeRight;
+    return landscape ? value.aspectRatio : 1 / value.aspectRatio;
   }
 }
 
-class _ShutterButton extends StatelessWidget {
-  const _ShutterButton();
+class _FocusReticle extends StatelessWidget {
+  const _FocusReticle({super.key, required this.center});
+
+  static const double _size = 72;
+
+  final Offset center;
 
   @override
   Widget build(BuildContext context) {
-    final cameraTheme = context.cameraTheme;
-    final ring = cameraTheme.shutterRing.withValues(alpha: 0.4);
-    final inner = cameraTheme.shutterInner.withValues(alpha: 0.35);
-
-    return Semantics(
-      button: true,
-      enabled: false,
-      label: 'Capture photo, available in the next module',
-      child: Container(
-        width: 74,
-        height: 74,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: ring, width: 4),
-        ),
-        child: Center(
+    return Positioned(
+      left: center.dx - _size / 2,
+      top: center.dy - _size / 2,
+      child: IgnorePointer(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 1.25, end: 1),
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          builder: (context, scale, child) =>
+              Transform.scale(scale: scale, child: child),
           child: Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: inner),
+            width: _size,
+            height: _size,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.amberAccent, width: 1.5),
+              borderRadius: BorderRadius.circular(AppSpacing.sm),
+            ),
           ),
         ),
       ),
