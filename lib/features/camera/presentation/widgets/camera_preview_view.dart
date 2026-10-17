@@ -292,10 +292,9 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
 
       await gallery.saveImage(path);
       keep = await _rememberCapture(path);
-      if (mounted) {
-        unawaited(HapticFeedback.mediumImpact());
-        context.showAppSnackBar('Saved to ${GallerySaverService.libraryName}');
-      }
+      // No confirmation message: the flash and the haptic already say the
+      // photo was taken, and the noise over the preview is not wanted.
+      if (mounted) unawaited(HapticFeedback.mediumImpact());
     } on AppException catch (failure) {
       if (mounted) {
         _notify(

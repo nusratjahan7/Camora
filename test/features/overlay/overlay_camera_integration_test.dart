@@ -345,9 +345,9 @@ void main() {
     // The reference is a guide only: the saved photo is exactly what the
     // camera produced, with no overlay composited in.
     expect(gallery.saved.single, platform.pictureBytes);
-    expect(find.text('Saved to Gallery'), findsOneWidget);
-    // The shutter stays live: there is no review screen to dismiss.
+    // The shutter stays live, and nothing is shown over the preview.
     expect(byKey('camera-shutter'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
   });
 
   testWidgets('hide, show and remove', (tester) async {

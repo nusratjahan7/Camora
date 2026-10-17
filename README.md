@@ -301,9 +301,10 @@ nothing to dismiss: the photo is already in the gallery when the flash clears.
 
 The reference overlay is a guide only. It is never composited into the photo, and
 a test compares the saved bytes with the camera's output. Saving requests the photo
-library permission only at that moment, with a rationale sheet first, and reports
-success or failure in a message; the shutter is guarded while a capture is in
-flight, so repeated taps cannot save twice. The app keeps its own copy of the
+library permission only at that moment, with a rationale sheet first, and stays
+quiet afterwards — the flash and the haptic are the confirmation, and a message
+only appears when something goes wrong. The shutter is guarded while a capture is
+in flight, so repeated taps cannot save twice. The app keeps its own copy of the
 capture, which is what the gallery below lists.
 
 ## Gallery and history

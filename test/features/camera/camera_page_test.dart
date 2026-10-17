@@ -280,7 +280,8 @@ void main() {
       expect(platform.captureCount, 1);
       // The camera's own image, never the preview or the reference overlay.
       expect(gallery.saved.single, platform.pictureBytes);
-      expect(find.text('Saved to Gallery'), findsOneWidget);
+      // Capturing says nothing: the flash and the haptic are the feedback.
+      expect(find.byType(SnackBar), findsNothing);
       // No review screen: still on the live camera.
       expect(shutter, findsOneWidget);
       expect(platform.liveCameras, hasLength(1));
