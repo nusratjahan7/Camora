@@ -183,7 +183,12 @@ class GlassSegmentedControl<T> extends StatelessWidget {
                     ? Colors.black
                     : theme.onScrim.withValues(alpha: 0.72),
               ),
-              child: Text(item.label, maxLines: 1, softWrap: false),
+              child: Text(
+                item.label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
         ),
@@ -205,7 +210,12 @@ class GlassSegmentedControl<T> extends StatelessWidget {
         mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
         children: <Widget>[
           for (final item in segments)
-            if (expand) Expanded(child: segment(item)) else segment(item),
+            if (expand)
+              Expanded(child: segment(item))
+            else
+              // Loose so a cramped bar (large text, a narrow phone) shrinks
+              // the segments instead of overflowing them.
+              Flexible(child: segment(item)),
         ],
       ),
     );

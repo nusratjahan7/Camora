@@ -18,7 +18,6 @@ import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:image/image.dart' as img;
 
 import '../camera/camera_page_test.dart' show FakePermissionService;
 import '../../helpers/camera_test_app.dart';
@@ -323,56 +322,27 @@ void main() {
     expect(settings(tester).offset, Offset.zero);
   });
 
-  testWidgets('the shutter works over an editable overlay; the saved photo '
-      'is the camera image only, and Save composite is a separate export', (
-    tester,
-  ) async {
+  testWidgets('the shutter over an editable overlay saves the camera image '
+      'only', (tester) async {
     await openWithOverlay(tester);
     expect(settings(tester).isLocked, isFalse);
 
     await tester.runAsync(() async {
       await tester.tap(byKey('camera-shutter'));
-      final dir = await TempFileService(temp).capturesDirectory();
-      for (var i = 0; i < 100; i++) {
-        if (_captureStored(dir)) break;
+      for (var i = 0; i < 100 && gallery.saved.isEmpty; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
     });
     await settle(tester);
+
     expect(platform.captureCount, 1);
-    expect(byKey('review-composite-tab'), findsOneWidget);
-
-    // Save: exactly the bytes the camera produced, no overlay composited in.
-    await tester.runAsync(() async {
-      await tester.tap(byKey('review-save'));
-      for (var i = 0; i < 50 && gallery.saved.isEmpty; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    });
-    await settle(tester);
+    // The reference is a guide only: the saved photo is exactly what the
+    // camera produced, with no overlay composited in.
     expect(gallery.saved.single, platform.pictureBytes);
-
-    // Save composite: rendered at the photo's own resolution.
-    await tester.tap(byKey('review-composite-tab'));
-    await tester.runAsync(() async {
-      for (var i = 0; i < 100; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-        await tester.pump();
-        if (byKey('review-composite').evaluate().isNotEmpty) break;
-      }
-      await tester.tap(byKey('review-save'));
-      for (var i = 0; i < 100 && gallery.saved.length < 2; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    });
-    await settle(tester);
-
-    expect(gallery.saved, hasLength(2));
-    final composite = img.decodeJpg(Uint8List.fromList(gallery.saved[1]))!;
-    expect(composite.width, 54);
-    expect(composite.height, 96);
-    expect(gallery.saved[1], isNot(platform.pictureBytes));
-    expect(find.text('Composite saved to Gallery'), findsOneWidget);
+    expect(find.text('Saved to Gallery'), findsOneWidget);
+    // The shutter stays live: there is no review screen to dismiss.
+    expect(byKey('camera-shutter'), findsOneWidget);
   });
 
   testWidgets('hide, show and remove', (tester) async {
@@ -508,12 +478,4 @@ void main() {
       closeTo(viewport.width / 2 + before.offset.dx * viewport.width, 1),
     );
   });
-}
-
-/// The controller copies the camera's raw file into place and then deletes
-/// it, so the copy is complete once only the stored photo remains.
-bool _captureStored(Directory dir) {
-  final names = dir.listSync().map((f) => f.path).toList();
-  return names.any((name) => name.contains('overlay_')) &&
-      !names.any((name) => name.contains('raw_'));
 }

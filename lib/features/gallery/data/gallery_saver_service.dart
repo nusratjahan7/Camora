@@ -4,6 +4,7 @@ import 'package:gal/gal.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/errors/app_error_handler.dart';
+import '../../../core/errors/app_exception.dart';
 
 /// Saves files to the system photo library (MediaStore on Android, Photos on
 /// iOS) without re-encoding them.
@@ -44,3 +45,10 @@ final gallerySaverServiceProvider = Provider<GallerySaverService>(
   (ref) =>
       GallerySaverService(errorHandler: ref.watch(appErrorHandlerProvider)),
 );
+
+/// True when a save failed because the photo library permission is missing,
+/// so the fix is in system settings.
+bool isGalleryAccessDenied(Object error) {
+  final cause = error is AppException ? error.cause : error;
+  return cause is GalException && cause.type == GalExceptionType.accessDenied;
+}

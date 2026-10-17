@@ -7,7 +7,9 @@ import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart'
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gal/gal.dart';
 
 import '../overlay/overlay_fakes.dart' show FakeSettingsController;
 import '../../helpers/camera_test_app.dart';
@@ -239,97 +241,130 @@ void main() {
       );
     });
 
-    Future<void> captureToReview(WidgetTester tester) async {
+    /// Captures once, waiting for the shutter's save to reach the gallery.
+    Future<void> captureOnce(WidgetTester tester) async {
       await pumpPage(
         tester,
         FakePermissionService(AppPermissionStatus.granted),
       );
       await settle(tester);
-      // Capture copies a real file, which needs the real event loop.
+      // Capture and save touch real files, which need the real event loop.
       await tester.runAsync(() async {
         await tester.tap(shutter);
-        for (var i = 0; i < 100; i++) {
+        for (var i = 0; i < 100 && gallery.saved.isEmpty; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
-          if (_captureStored(temp)) break;
         }
         await Future<void>.delayed(const Duration(milliseconds: 20));
       });
       await settle(tester);
-      expect(find.byKey(const ValueKey<String>('review-save')), findsOneWidget);
     }
 
-    String storedPhoto() => temp
+    /// Working copies left behind in the captures directory.
+    List<String> storedPhotos() => temp
         .listSync()
         .map((f) => f.path)
-        .firstWhere((path) => path.contains('Veylora_'));
+        .where((path) => path.contains('Veylora_'))
+        .toList();
 
-    testWidgets('capture opens the review with the camera released; Save '
-        'stores the original byte for byte', (tester) async {
-      await captureToReview(tester);
+    testWidgets('the shutter saves the camera image byte for byte and stays '
+        'on the camera', (tester) async {
+      await captureOnce(tester);
+
       expect(platform.captureCount, 1);
-      expect(platform.liveCameras, isEmpty);
+      // The camera's own image, never the preview or the reference overlay.
+      expect(gallery.saved.single, platform.pictureBytes);
+      expect(find.text('Saved to Gallery'), findsOneWidget);
+      // No review screen: still on the live camera, working copy cleaned up.
+      expect(shutter, findsOneWidget);
+      expect(platform.liveCameras, hasLength(1));
+      expect(storedPhotos(), isEmpty);
+    });
+
+    testWidgets('a capture that cannot be saved explains itself and leaves the '
+        'camera usable', (tester) async {
+      gallery.nextError = GalException(
+        type: GalExceptionType.notEnoughSpace,
+        platformException: PlatformException(code: 'TEST'),
+        stackTrace: StackTrace.current,
+      );
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
 
       await tester.runAsync(() async {
-        await tester.tap(find.byKey(const ValueKey<String>('review-save')));
+        await tester.tap(shutter);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await settle(tester);
+
+      expect(gallery.saved, isEmpty);
+      expect(find.textContaining('storage'), findsOneWidget);
+      expect(shutter, findsOneWidget);
+      expect(storedPhotos(), isEmpty);
+    });
+
+    testWidgets('saving without library access asks first and stops when '
+        'declined', (tester) async {
+      gallery.access = false;
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      await tester.runAsync(() async {
+        await tester.tap(shutter);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await settle(tester);
+
+      // Nothing reaches the gallery before the user sees the rationale.
+      expect(find.text('Continue'), findsOneWidget);
+      expect(gallery.saved, isEmpty);
+
+      await tester.tap(find.text('Not now'));
+      await settle(tester);
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await settle(tester);
+
+      expect(gallery.accessRequests, 0);
+      expect(gallery.saved, isEmpty);
+      expect(storedPhotos(), isEmpty);
+    });
+
+    testWidgets('granting access after the rationale saves the capture', (
+      tester,
+    ) async {
+      gallery.access = false;
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      await tester.runAsync(() async {
+        await tester.tap(shutter);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await settle(tester);
+
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+
+      await tester.runAsync(() async {
         for (var i = 0; i < 50 && gallery.saved.isEmpty; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
       });
       await settle(tester);
 
+      expect(gallery.accessRequests, 1);
       expect(gallery.saved.single, platform.pictureBytes);
-      expect(find.text('Saved to Gallery'), findsOneWidget);
-      expect(find.text('Saved'), findsOneWidget);
-
-      // Saved, so closing needs no confirmation; the camera reopens.
-      await tester.tap(find.byKey(const ValueKey<String>('review-close')));
-      await settle(tester);
       expect(shutter, findsOneWidget);
-      expect(platform.liveCameras, hasLength(1));
-    });
-
-    testWidgets('Retake deletes the photo and returns to the camera', (
-      tester,
-    ) async {
-      await captureToReview(tester);
-      final path = storedPhoto();
-
-      await tester.runAsync(() async {
-        await tester.tap(find.byKey(const ValueKey<String>('review-retake')));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      });
-      await settle(tester);
-
-      expect(shutter, findsOneWidget);
-      expect(File(path).existsSync(), isFalse);
-      expect(gallery.saved, isEmpty);
-    });
-
-    testWidgets('closing an unsaved photo asks before discarding it', (
-      tester,
-    ) async {
-      await captureToReview(tester);
-
-      await tester.tap(find.byKey(const ValueKey<String>('review-close')));
-      await settle(tester);
-      expect(find.text('Discard this photo?'), findsOneWidget);
-
-      await tester.tap(find.text('Keep'));
-      await settle(tester);
-      expect(find.byKey(const ValueKey<String>('review-save')), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey<String>('review-discard')));
-      await settle(tester);
-      await tester.runAsync(() async {
-        await tester.tap(
-          find.byKey(const ValueKey<String>('review-confirm-discard')),
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      });
-      await settle(tester);
-
-      expect(shutter, findsOneWidget);
-      expect(gallery.saved, isEmpty);
     });
 
     testWidgets('releases the camera in the background and reopens it', (
@@ -357,12 +392,4 @@ void main() {
       expect(shutter, findsOneWidget);
     });
   });
-}
-
-/// The controller copies the camera's raw file into place and then deletes
-/// it, so the copy is complete once only the stored photo remains.
-bool _captureStored(Directory dir) {
-  final names = dir.listSync().map((f) => f.path).toList();
-  return names.any((name) => name.contains('Veylora_')) &&
-      !names.any((name) => name.contains('raw_'));
 }

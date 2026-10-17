@@ -9,11 +9,10 @@ gallery over the device's live camera preview, tuning its opacity, and capturing
 shot. The reference is only a guide and is never saved into your photos. Built for
 Android and iOS.
 
-> **Module status — foundation only.** This build ships the project skeleton:
-> architecture, theming, routing, error handling, permissions and every native
-> dependency (camera, image picker, gallery saving, local storage, file handling).
-> The camera preview is live. Overlay alignment, opacity control and capture are the
-> next module and are intentionally not implemented yet.
+> **Capture and saving are live.** The camera preview, the reference overlay and
+> its opacity/position controls, and photo capture all work. The shutter saves the
+> camera's own image straight to the photo library — the preview, the controls and
+> the reference overlay are never part of it — and returns to the camera.
 
 ---
 
@@ -288,10 +287,18 @@ Notes:
 - While the overlay is unlocked, pinching resizes the overlay; to zoom the camera, tap a
   lens stop (0.5× / 1× / 2×…) or drag across the zoom pill, or lock the overlay.
 
-## Not implemented yet (next module)
+## Capture and saving
 
-- Saving captures to the device gallery (`GallerySaverService` is wired and ready).
-- Gallery / review screen for captured photos.
+Tap the shutter to capture through the active `CameraController`. The camera's own
+file is written to the system photo library byte for byte — no resize, no
+re-encode — and the app stays on the live preview. There is no review screen and
+nothing to dismiss: the photo is already in the gallery when the flash clears.
+
+The reference overlay is a guide only. It is never composited into the photo, and
+a test compares the saved bytes with the camera's output. Saving requests the photo
+library permission only at that moment, with a rationale sheet first, and reports
+success or failure in a message; the shutter is guarded while a capture is in
+flight, so repeated taps cannot save twice.
 
 ## Brand assets
 

@@ -1,23 +1,22 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../../../app/router/app_routes.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/errors/app_error_handler.dart';
 import '../../../../core/errors/app_exception.dart';
+import '../../../../core/permissions/app_permission.dart';
 import '../../../../core/permissions/permission_service.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/error_view.dart';
 import '../../../../shared/widgets/loading_view.dart';
-import '../../../capture/domain/captured_photo.dart';
-import '../../../capture/domain/composite_geometry.dart';
-import '../../../overlay/presentation/providers/overlay_image_provider.dart';
-import '../../../overlay/presentation/providers/overlay_settings_provider.dart';
+import '../../../../shared/widgets/permission_rationale_sheet.dart';
+import '../../../gallery/data/gallery_saver_service.dart';
 import '../../../overlay/presentation/widgets/overlay_controls.dart';
 import '../../../overlay/presentation/widgets/reference_overlay_layer.dart';
 import '../../domain/camera_errors.dart';
@@ -120,9 +119,6 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
   bool _blink = false;
   double _zoomAtScaleStart = 1.0;
 
-  /// Last laid-out viewport, captured with each photo for "Save composite".
-  Size? _viewportSize;
-
   CameraSessionController get _notifier =>
       ref.read(cameraSessionProvider.notifier);
 
@@ -137,12 +133,22 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
     final session = widget.session;
     final controller = session.controller;
 
+    // A released controller cannot render a preview, and `CameraPreview`
+    // throws if it is built with one. Rebuild when the session changes so the
+    // released viewport renders nothing while it waits to be replaced.
+    ref.watch(cameraSessionProvider);
+    if (!_notifier.isLive(controller)) {
+      return const ColoredBox(color: Colors.black);
+    }
+
     return ColoredBox(
       color: Colors.black,
       child: LayoutBuilder(
         builder: (context, constraints) {
+          // The builder can run once more after release (a constraint change)
+          // without this widget rebuilding, and its controller then throws.
+          if (!_notifier.isLive(controller)) return const SizedBox.shrink();
           final viewport = constraints.biggest;
-          _viewportSize = viewport;
           // One backdrop read of the preview shared by every glass control.
           return BackdropGroup(
             child: Stack(
@@ -246,55 +252,80 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
       if (mounted) setState(() => _blink = false);
     });
 
-    final notifier = _notifier;
     try {
-      final file = await notifier.capture();
+      final file = await _notifier.capture();
       if (file == null || !mounted) return;
-
-      final photo = CapturedPhoto(
-        path: file.path,
-        composite: _compositeSource(),
-      );
-      final review = GoRouter.of(
-        context,
-      ).push<void>(AppRoutes.review, extra: photo);
-      // The review covers the camera: release it until the user comes back.
-      // This unmounts the viewport, so only captured references are used
-      // from here on.
-      await notifier.hold();
-      await review;
-      await notifier.releaseHold();
+      await _saveToGallery(file.path);
     } on AppException catch (failure) {
       if (mounted) context.showAppSnackBar(failure.message);
     }
   }
 
-  /// Snapshot of the overlay exactly as on screen now, or null when no
-  /// reference image is loaded.
-  CompositeSource? _compositeSource() {
-    final overlay = ref.read(overlayImageProvider).value;
-    final viewport = _viewportSize;
-    final value = widget.session.controller.value;
-    if (overlay == null || viewport == null || value.previewSize == null) {
-      return null;
+  /// Writes the capture to the system photo library and frees the working copy.
+  ///
+  /// The file is the camera's own image — the preview, the controls and the
+  /// reference overlay are never part of it — so it is stored untouched.
+  Future<void> _saveToGallery(String path) async {
+    final gallery = ref.read(gallerySaverServiceProvider);
+    try {
+      if (!await gallery.hasAccess()) {
+        if (!mounted) return;
+        final accepted = await PermissionRationaleSheet.show(
+          context,
+          permission: AppPermission.photosAddOnly,
+        );
+        if (!accepted || !await gallery.requestAccess()) {
+          if (mounted) {
+            _notify(
+              '${AppConstants.appName} needs permission to save to your '
+              '${GallerySaverService.libraryName.toLowerCase()}.',
+              action: _settingsAction,
+            );
+          }
+          return;
+        }
+      }
+
+      await gallery.saveImage(path);
+      if (mounted) {
+        unawaited(HapticFeedback.mediumImpact());
+        context.showAppSnackBar('Saved to ${GallerySaverService.libraryName}');
+      }
+    } on AppException catch (failure) {
+      if (mounted) {
+        _notify(
+          failure.message,
+          action: isGalleryAccessDenied(failure) ? _settingsAction : null,
+        );
+      }
+    } finally {
+      _deleteWorkingCopy(path);
     }
-    return CompositeSource(
-      frame: PreviewFrame(
-        viewport: viewport,
-        previewAspectRatio: _displayAspectRatio(value),
-        devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
-        // Front cameras preview mirrored but save unmirrored photos.
-        mirrored: widget.session.isFrontFacing,
-        quarterTurns: CompositeGeometry.quarterTurnsBetween(
-          device: value.deviceOrientation,
-          screenIsLandscape:
-              MediaQuery.orientationOf(context) == Orientation.landscape,
-        ),
-      ),
-      settings: ref.read(overlaySettingsProvider),
-      image: overlay.image.clone(),
-      imageSize: overlay.originalSize,
-    );
+  }
+
+  SnackBarAction get _settingsAction => SnackBarAction(
+    label: 'Settings',
+    onPressed: () => ref.read(permissionServiceProvider).openSettings(),
+  );
+
+  void _notify(String message, {SnackBarAction? action}) {
+    ScaffoldMessenger.of(context)
+      ..removeCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message), action: action));
+  }
+
+  void _deleteWorkingCopy(String path) {
+    try {
+      final file = File(path);
+      if (file.existsSync()) file.deleteSync();
+    } on FileSystemException catch (error, stackTrace) {
+      // The photo is already in the library; failing to free the copy is not
+      // worth interrupting the user for.
+      ref
+          .read(appErrorHandlerProvider)
+          .logger
+          .warning('Could not delete $path.', error, stackTrace);
+    }
   }
 
   /// Mirrors how [CameraPreview] orients the stream, so tap coordinates match

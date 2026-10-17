@@ -320,6 +320,14 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     }
   }
 
+  /// Whether [controller] is the controller this session currently holds.
+  ///
+  /// Widgets use this before rendering a preview: a released controller
+  /// throws from `buildPreview`, and its viewport can be laid out once more
+  /// after release, before the new session replaces it.
+  bool isLive(CameraController controller) =>
+      identical(controller, _controller);
+
   /// The camera is an exclusive resource: release it whenever the app is not
   /// in the foreground and reopen the same lens when it returns.
   /// Releases the camera while another screen covers it.
@@ -330,13 +338,18 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
 
   /// Reopens the camera after [hold], unless the app is in the background
   /// (it then reopens on the next resume).
+  ///
+  /// Deferred to the next frame: the caller may be an event handler mid-pop,
+  /// and reopening from a frame keeps the reopen on the same timeline as the
+  /// widget tree that will show the new preview.
   Future<void> releaseHold() async {
     if (!_held) return;
     _held = false;
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
-      await _resume();
-    }
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
+    final binding = WidgetsBinding.instance;
+    binding.scheduleFrame();
+    binding.addPostFrameCallback((_) => unawaited(_resume()));
   }
 
   Future<void> handleAppLifecycle(AppLifecycleState lifecycle) async {
@@ -523,7 +536,8 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     _generation++;
 
     // Leave the session state before disposing, so no frame renders a
-    // released controller.
+    // released controller. A viewport that is laid out once more anyway is
+    // guarded by [isLive].
     if (_session != null) state = const AsyncLoading<CameraSession>();
     await _release();
   }
