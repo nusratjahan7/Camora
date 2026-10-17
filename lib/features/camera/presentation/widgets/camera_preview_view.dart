@@ -17,6 +17,8 @@ import '../../../../shared/widgets/error_view.dart';
 import '../../../../shared/widgets/loading_view.dart';
 import '../../../../shared/widgets/permission_rationale_sheet.dart';
 import '../../../gallery/data/gallery_saver_service.dart';
+import '../../../gallery/domain/gallery_entry.dart';
+import '../../../gallery/presentation/providers/gallery_history_provider.dart';
 import '../../../overlay/presentation/widgets/overlay_controls.dart';
 import '../../../overlay/presentation/widgets/reference_overlay_layer.dart';
 import '../../domain/camera_errors.dart';
@@ -261,12 +263,14 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
     }
   }
 
-  /// Writes the capture to the system photo library and frees the working copy.
+  /// Writes the capture to the system photo library and files it in the local
+  /// gallery, which keeps the app's own copy of the file.
   ///
   /// The file is the camera's own image — the preview, the controls and the
   /// reference overlay are never part of it — so it is stored untouched.
   Future<void> _saveToGallery(String path) async {
     final gallery = ref.read(gallerySaverServiceProvider);
+    var keep = false;
     try {
       if (!await gallery.hasAccess()) {
         if (!mounted) return;
@@ -287,6 +291,7 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
       }
 
       await gallery.saveImage(path);
+      keep = await _rememberCapture(path);
       if (mounted) {
         unawaited(HapticFeedback.mediumImpact());
         context.showAppSnackBar('Saved to ${GallerySaverService.libraryName}');
@@ -299,7 +304,27 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
         );
       }
     } finally {
-      _deleteWorkingCopy(path);
+      if (!keep) _deleteWorkingCopy(path);
+    }
+  }
+
+  /// Files the capture in the local gallery history, which keeps the working
+  /// copy. Returns false when it could not be recorded, so the caller cleans
+  /// the copy up rather than leaking a file nothing points at.
+  Future<bool> _rememberCapture(String path) async {
+    try {
+      await ref
+          .read(galleryHistoryProvider.notifier)
+          .record(path: path, kind: GalleryEntryKind.photo);
+      return true;
+    } catch (error, stackTrace) {
+      // The photo is already in the system library; a history failure is not
+      // worth reporting as a failed capture.
+      ref
+          .read(appErrorHandlerProvider)
+          .logger
+          .warning('The capture was not added to the gallery.', error, stackTrace);
+      return false;
     }
   }
 

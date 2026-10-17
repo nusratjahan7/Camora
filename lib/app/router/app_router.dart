@@ -6,6 +6,9 @@ import 'package:go_router/go_router.dart';
 import '../../core/errors/app_error_handler.dart';
 import '../../core/errors/app_exception.dart';
 import '../../features/camera/presentation/pages/camera_page.dart';
+import '../../features/gallery/domain/gallery_entry.dart';
+import '../../features/gallery/presentation/pages/gallery_page.dart';
+import '../../features/gallery/presentation/pages/gallery_preview_page.dart';
 import '../../features/home/presentation/pages/home_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
 import '../../shared/widgets/error_view.dart';
@@ -27,6 +30,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.camera,
         name: AppRoutes.cameraName,
         builder: (context, state) => const CameraPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.gallery,
+        name: AppRoutes.galleryName,
+        builder: (context, state) => const GalleryPage(),
+      ),
+      GoRoute(
+        path: AppRoutes.galleryPreview,
+        name: AppRoutes.galleryPreviewName,
+        // The entry travels in memory; without it (e.g. a restored route)
+        // there is nothing to show.
+        redirect: (context, state) =>
+            state.extra is GalleryEntry ? null : AppRoutes.gallery,
+        builder: (context, state) =>
+            GalleryPreviewPage(entry: state.extra! as GalleryEntry),
       ),
       GoRoute(
         path: AppRoutes.settings,

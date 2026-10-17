@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera_overlay/core/errors/app_exception.dart';
+import 'package:camera_overlay/core/files/file_service.dart';
+import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/gallery/data/image_picker_service.dart';
 import 'package:camera_overlay/features/overlay/data/overlay_image_decoder.dart';
 import 'package:camera_overlay/features/overlay/domain/overlay_fit_mode.dart';
@@ -11,6 +14,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_key_value_store.dart';
+import '../camera/fakes/fake_camera_platform.dart' show TempFileService;
 import 'overlay_fakes.dart';
 
 void main() {
@@ -67,15 +72,23 @@ void main() {
   group('image controller', () {
     late FakeImagePickerService picker;
     late ProviderContainer container;
+    late Directory temp;
 
-    setUp(() {
+    setUp(() async {
+      temp = await Directory.systemTemp.createTemp('overlay_image_test');
       picker = FakeImagePickerService();
       container = ProviderContainer.test(
         overrides: [
           imagePickerServiceProvider.overrideWithValue(picker),
+          fileServiceProvider.overrideWithValue(TempFileService(temp)),
+          keyValueStoreProvider.overrideWithValue(FakeKeyValueStore()),
           settingsControllerProvider.overrideWith(FakeSettingsController.new),
         ],
       );
+    });
+
+    tearDown(() async {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
     });
 
     OverlayImageController controller() =>
@@ -139,10 +152,19 @@ void main() {
   testWidgets('replacing and removing free the previous image after a frame', (
     tester,
   ) async {
+    final temp = await tester.runAsync(
+      () => Directory.systemTemp.createTemp('overlay_image_test'),
+    );
+    addTearDown(() {
+      if (temp != null && temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+
     final picker = FakeImagePickerService();
     final container = ProviderContainer.test(
       overrides: [
         imagePickerServiceProvider.overrideWithValue(picker),
+        fileServiceProvider.overrideWithValue(TempFileService(temp!)),
+        keyValueStoreProvider.overrideWithValue(FakeKeyValueStore()),
         settingsControllerProvider.overrideWith(FakeSettingsController.new),
       ],
     );

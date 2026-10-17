@@ -49,6 +49,13 @@ class HomePage extends ConsumerWidget {
               ),
               const SizedBox(height: AppSpacing.md),
               AppButton(
+                label: 'Gallery',
+                icon: Icons.photo_library_outlined,
+                variant: AppButtonVariant.outline,
+                onPressed: () => context.go(AppRoutes.gallery),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              AppButton(
                 label: 'Settings',
                 icon: Icons.tune,
                 variant: AppButtonVariant.outline,

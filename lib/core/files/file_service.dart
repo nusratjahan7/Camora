@@ -28,6 +28,37 @@ base class FileService {
     return File(p.join(directory.path, name));
   }
 
+  /// Where the app keeps its own copy of every reference image it has used,
+  /// so a guide can be picked again without reopening the system gallery.
+  Future<Directory> referencesDirectory() async {
+    final base = await getApplicationDocumentsDirectory();
+    final directory = Directory(p.join(base.path, 'references'));
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    return directory;
+  }
+
+  /// A new file in the references directory, for the app's own copy of a
+  /// reference image.
+  Future<File> createReferenceFile({required String extension}) async {
+    final directory = await referencesDirectory();
+    final name =
+        'reference_${DateTime.now().millisecondsSinceEpoch}.$extension';
+    return File(p.join(directory.path, name));
+  }
+
+  Future<bool> exists(String path) => File(path).exists();
+
+  /// Deletes [path] if it is there. A file that is already gone is not an
+  /// error: history outlives the files it points at.
+  Future<void> deleteIfPresent(String path) async {
+    final file = File(path);
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
   Future<void> deleteIfExists(File file) async {
     if (await file.exists()) {
       await file.delete();

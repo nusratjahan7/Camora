@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'package:camera_overlay/core/constants/storage_keys.dart';
 import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
+import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
@@ -10,10 +12,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gal/gal.dart';
+import 'package:path/path.dart' as p;
 
 import '../overlay/overlay_fakes.dart' show FakeSettingsController;
 import '../../helpers/camera_test_app.dart';
 import '../../helpers/fake_gallery.dart';
+import '../../helpers/fake_key_value_store.dart';
 import 'fakes/fake_camera_platform.dart';
 
 class FakePermissionService implements PermissionService {
@@ -45,12 +49,14 @@ void main() {
   late Directory temp;
   late FakeCameraPlatform platform;
   late FakeGallerySaver gallery;
+  late FakeKeyValueStore store;
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('camera_page_test');
     platform = FakeCameraPlatform(captureDirectory: temp);
     CameraPlatform.instance = platform;
     gallery = FakeGallerySaver();
+    store = FakeKeyValueStore();
   });
 
   tearDown(() => temp.deleteSync(recursive: true));
@@ -65,6 +71,7 @@ void main() {
         permissionServiceProvider.overrideWithValue(permissions),
         fileServiceProvider.overrideWithValue(TempFileService(temp)),
         gallerySaverServiceProvider.overrideWithValue(gallery),
+        keyValueStoreProvider.overrideWithValue(store),
         // The camera screen reads overlay defaults from Settings.
         settingsControllerProvider.overrideWith(FakeSettingsController.new),
       ],
@@ -274,10 +281,17 @@ void main() {
       // The camera's own image, never the preview or the reference overlay.
       expect(gallery.saved.single, platform.pictureBytes);
       expect(find.text('Saved to Gallery'), findsOneWidget);
-      // No review screen: still on the live camera, working copy cleaned up.
+      // No review screen: still on the live camera.
       expect(shutter, findsOneWidget);
       expect(platform.liveCameras, hasLength(1));
-      expect(storedPhotos(), isEmpty);
+
+      // The capture is filed in the local gallery, which keeps the app's copy.
+      final stored = storedPhotos();
+      expect(stored, hasLength(1));
+      expect(
+        await store.getString(StorageKeys.galleryHistory),
+        contains(p.basename(stored.single)),
+      );
     });
 
     testWidgets('a capture that cannot be saved explains itself and leaves the '

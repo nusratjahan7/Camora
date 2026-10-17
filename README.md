@@ -34,6 +34,7 @@ Dependencies (latest mutually compatible stable releases, resolved by `flutter p
 | `camera` | 0.12.1 | live camera preview |
 | `image_picker` | 1.2.4 | picking a reference image |
 | `gal` | 2.3.3 | saving captures to the photo gallery |
+| `share_plus` | 13.3.1 | system share sheet |
 | `permission_handler` | 13.0.2 | runtime permission requests |
 | `shared_preferences` | 2.5.6 | local settings storage |
 | `path_provider` | 2.1.6 | app directory / file handling |
@@ -70,7 +71,8 @@ lib/
     ├── home/       presentation/pages/
     ├── camera/     presentation/{pages,providers,widgets}/
     ├── overlay/    domain/, presentation/providers/
-    ├── gallery/    data/           # ImagePickerService, GallerySaverService
+    ├── gallery/    domain/, data/, presentation/{pages,providers,widgets}/
+    │               # picker, gallery saver, share, local history
     └── settings/   domain/, data/, presentation/{providers,pages}/
 ```
 
@@ -253,7 +255,10 @@ flutter test        # unit + widget tests
 Camera tests drive the real `CameraController` against an in-memory
 `CameraPlatform` fake (`test/features/camera/fakes`), covering default lens selection,
 switching, capture concurrency, lifecycle release/reopen, error states and the
-permission screens.
+permission screens. Gallery tests cover the history store and deleted files:
+metadata round-trips through a fake key-value store, unreadable or corrupt stored
+data degrades to an empty history, and an entry whose file has gone is flagged
+rather than failing.
 
 ---
 
@@ -298,7 +303,35 @@ The reference overlay is a guide only. It is never composited into the photo, an
 a test compares the saved bytes with the camera's output. Saving requests the photo
 library permission only at that moment, with a rationale sheet first, and reports
 success or failure in a message; the shutter is guarded while a capture is in
-flight, so repeated taps cannot save twice.
+flight, so repeated taps cannot save twice. The app keeps its own copy of the
+capture, which is what the gallery below lists.
+
+## Gallery and history
+
+**Gallery** on the home screen opens the app's own history, split into two tabs:
+
+| Tab | What it holds |
+|---|---|
+| Photos | Every photo this app captured, from the app's own copy of the file |
+| References | Every reference image that has been floated over the preview, so it can be picked again without reopening the system picker |
+
+Thumbnails are decoded at thumbnail size, so a 12 MP file never lands in memory
+just to draw a small square. Tapping one opens a full-screen preview offering:
+
+| Action | Behaviour |
+|---|---|
+| Share | Opens the system share sheet (`share_plus`), anchored to the button on iPad |
+| Delete | Forgets the entry and deletes the app's copy; photos already in the system library are untouched |
+| Use as reference | Reference images only: loads it straight back onto the camera as the guide |
+
+Each photo entry records whether it is the camera's original or a composite
+export, and composites are badged in the grid so the two are never confused.
+
+Only a path, a kind, an export flag and a timestamp are stored — a JSON list in
+shared preferences — so the history stays light and the images stay on disk.
+Files can be removed outside the app, so every entry is checked on load: a missing
+file is marked **Missing** and the preview explains it instead of failing.
+Nothing leaves the device: there is no account, no synchronisation and no backend.
 
 ## Brand assets
 

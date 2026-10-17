@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
+import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/camera/presentation/pages/camera_page.dart';
 import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart';
 import 'package:camera_overlay/features/gallery/data/image_picker_service.dart';
@@ -22,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../camera/camera_page_test.dart' show FakePermissionService;
 import '../../helpers/camera_test_app.dart';
 import '../../helpers/fake_gallery.dart';
+import '../../helpers/fake_key_value_store.dart';
 import '../camera/fakes/fake_camera_platform.dart';
 import 'overlay_fakes.dart';
 
@@ -31,6 +33,7 @@ void main() {
   late FakeImagePickerService picker;
   late Uint8List referencePng;
   late FakeGallerySaver gallery;
+  late FakeKeyValueStore store;
 
   setUp(() async {
     temp = Directory.systemTemp.createTempSync('overlay_camera_test');
@@ -38,6 +41,7 @@ void main() {
     CameraPlatform.instance = platform;
     picker = FakeImagePickerService();
     gallery = FakeGallerySaver();
+    store = FakeKeyValueStore();
   });
 
   tearDown(() => temp.deleteSync(recursive: true));
@@ -73,6 +77,7 @@ void main() {
         fileServiceProvider.overrideWithValue(TempFileService(temp)),
         imagePickerServiceProvider.overrideWithValue(picker),
         gallerySaverServiceProvider.overrideWithValue(gallery),
+        keyValueStoreProvider.overrideWithValue(store),
         settingsControllerProvider.overrideWith(FakeSettingsController.new),
       ],
     );

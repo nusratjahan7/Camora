@@ -1,9 +1,16 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/errors/app_error_handler.dart';
 import '../../../../core/errors/app_exception.dart';
+import '../../../../core/files/file_service.dart';
 import '../../../gallery/data/image_picker_service.dart';
+import '../../../gallery/domain/gallery_entry.dart';
+import '../../../gallery/presentation/providers/gallery_history_provider.dart';
 import '../../data/overlay_image_decoder.dart';
 import '../../domain/overlay_image.dart';
 import 'overlay_settings_provider.dart';
@@ -57,11 +64,10 @@ class OverlayImageController extends AsyncNotifier<OverlayImage?> {
         return false;
       }
 
-      _current = decoded;
-      state = AsyncData<OverlayImage?>(decoded);
-      ref.read(overlaySettingsProvider.notifier).resetForNewImage();
-      ref.read(overlayTrayProvider.notifier).showForNewImage();
-      _releaseAfterFrame(previous);
+      _apply(decoded, previous);
+      // File the guide away before reporting success, so the history and the
+      // file on disk are in step by the time the caller continues.
+      await _rememberReference(file);
       return true;
     } catch (error, stackTrace) {
       _restore(previous);
@@ -76,6 +82,84 @@ class OverlayImageController extends AsyncNotifier<OverlayImage?> {
     } finally {
       _picking = false;
     }
+  }
+
+  /// Reuses a reference image from the local gallery history.
+  ///
+  /// Throws an [ImageSelectionFailure] when the file can no longer be read.
+  Future<bool> useStoredReference(String path, {required String name}) async {
+    if (_picking) return false;
+    _picking = true;
+
+    final errors = ref.read(appErrorHandlerProvider);
+    final previous = _current;
+    state = const AsyncLoading<OverlayImage?>();
+    try {
+      final bytes = await File(path).readAsBytes();
+      final decoded = await ref
+          .read(overlayImageDecoderProvider)
+          .decode(bytes, name: name);
+      if (!ref.mounted) {
+        decoded.image.dispose();
+        return false;
+      }
+
+      _apply(decoded, previous);
+      return true;
+    } catch (error, stackTrace) {
+      _restore(previous);
+      errors.report(error, stackTrace, operation: 'load saved reference');
+      final failure = errors.map(error, stackTrace);
+      if (failure is ImageSelectionFailure) throw failure;
+      throw ImageSelectionFailure(
+        'That reference image could not be opened. It may have been removed.',
+        cause: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _picking = false;
+    }
+  }
+
+  void _apply(OverlayImage decoded, OverlayImage? previous) {
+    _current = decoded;
+    state = AsyncData<OverlayImage?>(decoded);
+    ref.read(overlaySettingsProvider.notifier).resetForNewImage();
+    ref.read(overlayTrayProvider.notifier).showForNewImage();
+    _releaseAfterFrame(previous);
+  }
+
+  /// Keeps the app's own copy of a picked file, so the guide can be picked
+  /// again from the gallery without reopening the system photo picker.
+  ///
+  /// Fire and forget: the guide is already on screen, and this outlives the
+  /// call, so everything it needs is read up front.
+  Future<void> _rememberReference(XFile file) async {
+    final files = ref.read(fileServiceProvider);
+    final history = ref.read(galleryHistoryProvider.notifier);
+    final logger = ref.read(appErrorHandlerProvider).logger;
+
+    try {
+      final target = await files.createReferenceFile(
+        extension: _extensionOf(file.name),
+      );
+      // `saveTo` handles both a real file and an XFile held in memory.
+      await file.saveTo(target.path);
+      await history.record(
+        path: target.path,
+        kind: GalleryEntryKind.reference,
+        name: file.name,
+      );
+    } catch (error, stackTrace) {
+      // Failing to file the guide away is not worth interrupting the user for.
+      logger.warning('Could not keep the reference image.', error, stackTrace);
+    }
+  }
+
+  static String _extensionOf(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot == name.length - 1) return 'jpg';
+    return name.substring(dot + 1).toLowerCase();
   }
 
   void remove() {

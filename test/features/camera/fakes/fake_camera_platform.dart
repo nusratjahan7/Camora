@@ -207,4 +207,7 @@ final class TempFileService extends FileService {
 
   @override
   Future<Directory> capturesDirectory() async => directory;
+
+  @override
+  Future<Directory> referencesDirectory() async => directory;
 }
