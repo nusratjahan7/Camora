@@ -5,6 +5,7 @@ import 'package:camera_overlay/core/logging/app_logger.dart';
 import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/settings/data/settings_repository.dart';
 import 'package:camera_overlay/features/settings/domain/app_settings.dart';
+import 'package:camera_overlay/features/settings/domain/capture_ratio.dart';
 import 'package:camera_overlay/features/settings/domain/preferred_camera.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:flutter/material.dart';
@@ -32,6 +33,8 @@ void main() {
       showAlignmentGrid: false,
       preferredCamera: PreferredCamera.front,
       hapticsEnabled: false,
+      captureRatio: CaptureRatio.square11,
+      showSensorSpill: false,
     );
 
     await repository.save(settings);
@@ -39,16 +42,24 @@ void main() {
     expect(await repository.load(), settings);
   });
 
+  test('4:3 is the default capture ratio', () {
+    expect(AppSettings.defaults.captureRatio, CaptureRatio.classic43);
+    expect(AppSettings.defaults.showSensorSpill, isTrue);
+  });
+
   test('unknown or missing values fall back to the defaults', () async {
     await store.setString(StorageKeys.themeMode, 'dusk');
     await store.setString(StorageKeys.preferredCamera, 'sideways');
+    await store.setString(StorageKeys.captureRatio, 'panorama');
 
     final settings = await repository.load();
 
     expect(settings.themeMode, AppSettings.defaults.themeMode);
     expect(settings.preferredCamera, AppSettings.defaults.preferredCamera);
+    expect(settings.captureRatio, AppSettings.defaults.captureRatio);
     expect(settings.showAlignmentGrid, AppSettings.defaults.showAlignmentGrid);
     expect(settings.hapticsEnabled, AppSettings.defaults.hapticsEnabled);
+    expect(settings.showSensorSpill, AppSettings.defaults.showSensorSpill);
     expect(
       settings.defaultOverlayOpacity,
       AppSettings.defaults.defaultOverlayOpacity,

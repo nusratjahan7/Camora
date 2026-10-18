@@ -5,6 +5,7 @@ import '../../../../core/errors/app_error_handler.dart';
 import '../../../../core/haptics/haptics.dart';
 import '../../data/settings_repository.dart';
 import '../../domain/app_settings.dart';
+import '../../domain/capture_ratio.dart';
 import '../../domain/preferred_camera.dart';
 
 class SettingsController extends AsyncNotifier<AppSettings> {
@@ -31,6 +32,12 @@ class SettingsController extends AsyncNotifier<AppSettings> {
 
   Future<void> setHapticsEnabled(bool value) =>
       _apply((settings) => settings.copyWith(hapticsEnabled: value));
+
+  Future<void> setCaptureRatio(CaptureRatio ratio) =>
+      _apply((settings) => settings.copyWith(captureRatio: ratio));
+
+  Future<void> setShowSensorSpill(bool value) =>
+      _apply((settings) => settings.copyWith(showSensorSpill: value));
 
   Future<void> _apply(AppSettings Function(AppSettings) transform) async {
     final current = state.value ?? AppSettings.defaults;

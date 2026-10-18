@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import 'camera_capabilities.dart';
 import 'camera_flash_mode.dart';
+import 'capture_mode.dart';
 
 @immutable
 class CameraSession {
@@ -15,6 +16,9 @@ class CameraSession {
     this.zoom = 1.0,
     this.isCapturing = false,
     this.lastCapture,
+    this.captureMode = CaptureMode.photo,
+    this.isRecording = false,
+    this.recordingDuration = Duration.zero,
   });
 
   final CameraController controller;
@@ -25,6 +29,13 @@ class CameraSession {
   final double zoom;
   final bool isCapturing;
   final XFile? lastCapture;
+
+  /// Photo or video: decides what the shutter does, and whether the camera was
+  /// opened with audio.
+  final CaptureMode captureMode;
+
+  final bool isRecording;
+  final Duration recordingDuration;
 
   bool get canSwitchCamera => cameras.length > 1;
 
@@ -40,6 +51,9 @@ class CameraSession {
     double? zoom,
     bool? isCapturing,
     XFile? lastCapture,
+    CaptureMode? captureMode,
+    bool? isRecording,
+    Duration? recordingDuration,
   }) {
     return CameraSession(
       controller: controller ?? this.controller,
@@ -50,6 +64,9 @@ class CameraSession {
       zoom: zoom ?? this.zoom,
       isCapturing: isCapturing ?? this.isCapturing,
       lastCapture: lastCapture ?? this.lastCapture,
+      captureMode: captureMode ?? this.captureMode,
+      isRecording: isRecording ?? this.isRecording,
+      recordingDuration: recordingDuration ?? this.recordingDuration,
     );
   }
 }

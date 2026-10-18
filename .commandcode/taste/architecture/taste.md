@@ -8,3 +8,5 @@
 - Prefers keeping large binary assets (e.g. images) on disk and persisting only file paths plus lightweight metadata locally, rather than embedding image data. Confidence: 0.75
 - Avoids loading large files into memory unnecessarily (e.g. decodes images at display/thumbnail size rather than full resolution). Confidence: 0.75
 - Wants new features integrated with the existing modules (reusing their services/abstractions) rather than duplicated or siloed. Confidence: 0.65
+- Prefers purely presentational changes (e.g. a capture framing/aspect ratio) to not restart or recreate live resources like the camera session. Confidence: 0.7
+- Prefers deriving geometry and sizing from the actual runtime context (measured area, safe-area insets, device orientation) rather than hardcoding assumed values. Confidence: 0.7

@@ -2,7 +2,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../constants/app_constants.dart';
 
-enum AppPermission { camera, photos, photosAddOnly }
+enum AppPermission { camera, photos, photosAddOnly, microphone }
 
 enum AppPermissionStatus {
   granted,
@@ -23,18 +23,21 @@ extension AppPermissionDetails on AppPermission {
     AppPermission.camera => Permission.camera,
     AppPermission.photos => Permission.photos,
     AppPermission.photosAddOnly => Permission.photosAddOnly,
+    AppPermission.microphone => Permission.microphone,
   };
 
   String get label => switch (this) {
     AppPermission.camera => 'camera',
     AppPermission.photos => 'photo library',
     AppPermission.photosAddOnly => 'photo library',
+    AppPermission.microphone => 'microphone',
   };
 
   String get rationaleTitle => switch (this) {
     AppPermission.camera => 'Allow camera access',
     AppPermission.photos => 'Allow photo library access',
     AppPermission.photosAddOnly => 'Allow saving to your photos',
+    AppPermission.microphone => 'Allow microphone access',
   };
 
   String get rationaleBody => switch (this) {
@@ -48,6 +51,9 @@ extension AppPermissionDetails on AppPermission {
     AppPermission.photosAddOnly =>
       '${AppConstants.appName} saves your finished captures to your photo library. '
           'Existing photos are never read or modified.',
+    AppPermission.microphone =>
+      '${AppConstants.appName} records sound while you film a clip. The microphone is used '
+          'only while recording, and the audio stays on your device with the video.',
   };
 }
 

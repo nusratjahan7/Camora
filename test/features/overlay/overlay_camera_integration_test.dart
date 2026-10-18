@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:camera_overlay/core/constants/storage_keys.dart';
 import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
@@ -14,11 +15,14 @@ import 'package:camera_overlay/features/overlay/domain/overlay_settings.dart';
 import 'package:camera_overlay/features/overlay/presentation/providers/overlay_image_provider.dart';
 import 'package:camera_overlay/features/overlay/presentation/providers/overlay_settings_provider.dart';
 import 'package:camera_overlay/features/overlay/presentation/widgets/reference_overlay_layer.dart';
+import 'package:camera_overlay/features/settings/domain/app_settings.dart';
+import 'package:camera_overlay/features/settings/domain/capture_ratio.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 import '../camera/camera_page_test.dart' show FakePermissionService;
 import '../../helpers/camera_test_app.dart';
@@ -59,7 +63,14 @@ void main() {
   }
 
   /// Opens the camera on a 360x800 phone and loads a 3:4 reference image.
-  Future<void> openWithOverlay(WidgetTester tester) async {
+  ///
+  /// The capture ratio defaults to Full Screen here, because on a padded-free
+  /// test window that is exactly the old full-bleed viewport — so the framing
+  /// expectations below stay about the overlay, not the ratio.
+  Future<void> openWithOverlay(
+    WidgetTester tester, {
+    CaptureRatio ratio = CaptureRatio.fullScreen,
+  }) async {
     tester.view
       ..physicalSize = const Size(1080, 2400)
       ..devicePixelRatio = 3;
@@ -78,14 +89,23 @@ void main() {
         imagePickerServiceProvider.overrideWithValue(picker),
         gallerySaverServiceProvider.overrideWithValue(gallery),
         keyValueStoreProvider.overrideWithValue(store),
-        settingsControllerProvider.overrideWith(FakeSettingsController.new),
+        settingsControllerProvider.overrideWith(
+          () => FakeSettingsController(AppSettings(captureRatio: ratio)),
+        ),
       ],
     );
     await settle(tester);
 
     await tester.runAsync(() async {
       await tester.tap(find.byKey(const ValueKey<String>('overlay-pick')));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // The pick decodes off the real event loop and is filed in history right
+      // after it is applied, so wait for that rather than guessing a delay:
+      // fixed delays go flaky when the suite runs files in parallel.
+      for (var i = 0; i < 300; i++) {
+        if (await store.getString(StorageKeys.galleryHistory) != null) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
     });
     await settle(tester);
     expect(find.byType(OverlayPicture), findsOneWidget);
@@ -342,12 +362,80 @@ void main() {
     await settle(tester);
 
     expect(platform.captureCount, 1);
-    // The reference is a guide only: the saved photo is exactly what the
-    // camera produced, with no overlay composited in.
-    expect(gallery.saved.single, platform.pictureBytes);
+    // The reference is a guide only: the saved photo holds the camera's own
+    // pixels and matching framing, with no overlay composited in.
+    final saved = img.decodeJpg(Uint8List.fromList(gallery.saved.single))!;
+    expect(saved.width / saved.height, closeTo(360 / 800, 0.01));
+    for (final (x, y) in <(int, int)>[
+      (0, 0),
+      (saved.width ~/ 2, saved.height ~/ 2),
+      (saved.width - 1, saved.height - 1),
+    ]) {
+      final pixel = saved.getPixel(x, y);
+      expect(pixel.r, closeTo(40, 12));
+      expect(pixel.g, closeTo(90, 12));
+      expect(pixel.b, closeTo(140, 12));
+    }
     // The shutter stays live, and nothing is shown over the preview.
     expect(byKey('camera-shutter'), findsOneWidget);
     expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('4:3 is the default and scopes the overlay to the frame', (
+    tester,
+  ) async {
+    await openWithOverlay(tester, ratio: CaptureRatio.classic43);
+
+    // 4:3 inside a 360x800 window: full width, 270 tall.
+    expect(
+      tester.getSize(find.byType(ReferenceOverlayLayer)),
+      const Size(360, 270),
+    );
+    // The overlay is framed by the visible crop, not the whole screen.
+    final picture = find.descendant(
+      of: find.byType(OverlayPicture),
+      matching: find.byType(RawImage),
+    );
+    expect(tester.getSize(picture), const Size(202.5, 270));
+  });
+
+  testWidgets('switching the ratio re-frames the overlay and keeps its state', (
+    tester,
+  ) async {
+    await openWithOverlay(tester, ratio: CaptureRatio.classic43);
+    expect(
+      tester.getSize(find.byType(ReferenceOverlayLayer)),
+      const Size(360, 270),
+    );
+
+    await tester.dragFrom(previewPoint, const Offset(40, 20));
+    await tester.pump();
+    await tester.tap(byKey('overlay-preset-25'));
+    await tester.tap(byKey('overlay-lock'));
+    await tester.pump();
+    final before = settings(tester);
+    expect(before.isLocked, isTrue);
+    expect(before.opacity, 0.25);
+    expect(before.offset, isNot(Offset.zero));
+
+    await container(tester)
+        .read(settingsControllerProvider.notifier)
+        .setCaptureRatio(CaptureRatio.square11);
+    await settle(tester);
+
+    // The frame follows the new ratio...
+    expect(
+      tester.getSize(find.byType(ReferenceOverlayLayer)),
+      const Size(360, 360),
+    );
+    // ...and nothing about the overlay's own state moved with it.
+    final after = settings(tester);
+    expect(after.opacity, before.opacity);
+    expect(after.offset, before.offset);
+    expect(after.scale, before.scale);
+    expect(after.rotation, before.rotation);
+    expect(after.isLocked, before.isLocked);
+    expect(after.fitMode, before.fitMode);
   });
 
   testWidgets('hide, show and remove', (tester) async {

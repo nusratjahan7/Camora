@@ -104,6 +104,53 @@ void main() {
     expect(find.text('No reference images yet'), findsNothing);
   });
 
+  testWidgets('a clip lists under the Videos tab with a play glyph', (
+    tester,
+  ) async {
+    files.present.add('Veylora_1.mp4');
+    await container.read(galleryHistoryProvider.future);
+    await container
+        .read(galleryHistoryProvider.notifier)
+        .record(path: 'Veylora_1.mp4', kind: GalleryEntryKind.video);
+
+    await pumpGallery(tester);
+    // The clip is not among the photos.
+    expect(find.byIcon(Icons.play_circle_outline), findsNothing);
+
+    await tester.tap(find.text('Videos'));
+    await settle(tester);
+
+    expect(find.text('No videos yet'), findsNothing);
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+  });
+
+  testWidgets('opening a clip explains it when it cannot be played', (
+    tester,
+  ) async {
+    files.present.add('Veylora_2.mp4');
+    await container.read(galleryHistoryProvider.future);
+    await container
+        .read(galleryHistoryProvider.notifier)
+        .record(path: 'Veylora_2.mp4', kind: GalleryEntryKind.video);
+
+    await pumpGallery(tester);
+    await tester.tap(find.text('Videos'));
+    await settle(tester);
+    await tester.tap(find.byIcon(Icons.play_circle_outline));
+    await settle(tester);
+
+    // Playback is the platform player's job and there is none in a widget
+    // test, so the screen says so instead of failing silently. The actions a
+    // clip does support are still there.
+    expect(find.textContaining('could not be played'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('gallery-share')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('gallery-delete')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('gallery-use-reference')),
+      findsNothing,
+    );
+  });
+
   testWidgets('an entry whose file is gone is flagged and can be removed', (
     tester,
   ) async {

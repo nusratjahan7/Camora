@@ -6,14 +6,19 @@ import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
 import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/camera/presentation/pages/camera_page.dart';
+import 'package:camera_overlay/features/camera/presentation/providers/camera_providers.dart';
 import 'package:camera_overlay/features/camera/presentation/widgets/alignment_grid.dart';
 import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart';
+import 'package:camera_overlay/features/settings/domain/app_settings.dart';
+import 'package:camera_overlay/features/settings/domain/capture_ratio.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gal/gal.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
 import '../overlay/overlay_fakes.dart' show FakeSettingsController;
@@ -65,8 +70,9 @@ void main() {
 
   Future<void> pumpPage(
     WidgetTester tester,
-    FakePermissionService permissions,
-  ) {
+    FakePermissionService permissions, {
+    AppSettings settings = AppSettings.defaults,
+  }) {
     return pumpCameraApp(
       tester,
       overrides: [
@@ -74,8 +80,11 @@ void main() {
         fileServiceProvider.overrideWithValue(TempFileService(temp)),
         gallerySaverServiceProvider.overrideWithValue(gallery),
         keyValueStoreProvider.overrideWithValue(store),
-        // The camera screen reads overlay defaults from Settings.
-        settingsControllerProvider.overrideWith(FakeSettingsController.new),
+        // The camera screen reads the capture ratio and overlay defaults from
+        // Settings.
+        settingsControllerProvider.overrideWith(
+          () => FakeSettingsController(settings),
+        ),
       ],
     );
   }
@@ -267,6 +276,112 @@ void main() {
       expect(find.byType(CameraPage), findsNothing);
     });
 
+    testWidgets('the ratio control cycles the framing and stores the choice', (
+      tester,
+    ) async {
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      // 4:3 by default, and the caption shows the stream cropped to it.
+      expect(find.text('4:3'), findsOneWidget);
+      expect(find.text('1080×1920 → 1080×810'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey<String>('camera-ratio')));
+      await settle(tester);
+
+      expect(find.text('16:9'), findsOneWidget);
+      expect(await store.getString(StorageKeys.captureRatio), 'widescreen169');
+      // The caption tracks the new frame rather than the old one.
+      expect(find.text('1080×1920 → 1080×810'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey<String>('camera-ratio')));
+      await settle(tester);
+      expect(find.text('1:1'), findsOneWidget);
+    });
+
+    testWidgets('filming records a clip into the gallery', (tester) async {
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      // Video mode reopens the camera with audio and takes the ratio control
+      // out of play, since a clip records at the camera's native ratio.
+      await tester.tap(find.byKey(const ValueKey<String>('camera-mode')));
+      await settle(tester);
+      expect(platform.audioRequested.values, contains(isTrue));
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      // The shutter turns into a record button, then into a stop button with a
+      // running clock once filming starts.
+      expect(find.bySemanticsLabel('Start recording'), findsOneWidget);
+      await tester.tap(shutter);
+      await settle(tester);
+      expect(find.bySemanticsLabel('Stop recording'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('camera-recording-timer')),
+        findsOneWidget,
+      );
+
+      await tester.runAsync(() async {
+        await tester.tap(shutter);
+        // Stopping writes and files the clip, which needs the real loop.
+        for (var i = 0; i < 200 && gallery.savedVideos.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await settle(tester);
+
+      expect(platform.startRecordingCount, 1);
+      expect(platform.stopRecordingCount, 1);
+      expect(gallery.savedVideos.single, endsWith('.mp4'));
+      expect(
+        await store.getString(StorageKeys.galleryHistory),
+        contains('"kind":"video"'),
+      );
+      // Back to a record button, and the clock is gone.
+      expect(find.bySemanticsLabel('Start recording'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('camera-recording-timer')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('changing the ratio never restarts the camera', (tester) async {
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(CameraPage)),
+      );
+      final before = container
+          .read(cameraSessionProvider)
+          .requireValue
+          .controller;
+
+      for (var i = 0; i < CaptureRatio.values.length; i++) {
+        await tester.tap(find.byKey(const ValueKey<String>('camera-ratio')));
+        await settle(tester);
+      }
+
+      // Same controller, same live camera: the ratio is pure layout.
+      final after = container
+          .read(cameraSessionProvider)
+          .requireValue
+          .controller;
+      expect(identical(before, after), isTrue);
+      expect(platform.created, hasLength(1));
+      expect(platform.liveCameras, hasLength(1));
+    });
+
     testWidgets('shows an error with retry when the camera fails to start', (
       tester,
     ) async {
@@ -301,13 +416,25 @@ void main() {
     });
 
     /// Captures once, waiting for the shutter's save to reach the gallery.
-    Future<void> captureOnce(WidgetTester tester) async {
+    Future<void> captureOnce(
+      WidgetTester tester, {
+      AppSettings settings = AppSettings.defaults,
+      Size? surface,
+    }) async {
+      if (surface != null) {
+        tester.view
+          ..physicalSize = surface * 3
+          ..devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+      }
       await pumpPage(
         tester,
         FakePermissionService(AppPermissionStatus.granted),
+        settings: settings,
       );
       await settle(tester);
-      // Capture and save touch real files, which need the real event loop.
+      // Capture, crop and save touch real files and a worker isolate, which
+      // need the real event loop.
       await tester.runAsync(() async {
         await tester.tap(shutter);
         for (var i = 0; i < 100 && gallery.saved.isEmpty; i++) {
@@ -325,13 +452,35 @@ void main() {
         .where((path) => path.contains('Veylora_'))
         .toList();
 
-    testWidgets('the shutter saves the camera image byte for byte and stays '
+    /// Pumps the camera in its no-crop configuration: Full Screen on a 9:16
+    /// window matches the stream, so a capture is a plain file copy. Tests
+    /// about permissions and saving stay about those, not about the crop.
+    Future<void> pumpNoCrop(WidgetTester tester) async {
+      tester.view
+        ..physicalSize = const Size(1080, 1920)
+        ..devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+        settings: const AppSettings(captureRatio: CaptureRatio.fullScreen),
+      );
+      await settle(tester);
+    }
+
+    testWidgets('the shutter crops the still to the selected ratio and stays '
         'on the camera', (tester) async {
+      // The 4:3 default on the default 800x600 window.
       await captureOnce(tester);
 
       expect(platform.captureCount, 1);
-      // The camera's own image, never the preview or the reference overlay.
-      expect(gallery.saved.single, platform.pictureBytes);
+      // The camera's own image, cropped to the frame the preview showed: a
+      // 4:3 cut of the 540x960 still. The preview, the controls and the
+      // reference overlay are never part of it.
+      final saved = img.decodeJpg(Uint8List.fromList(gallery.saved.single))!;
+      expect(saved.width, 540);
+      expect(saved.height, 405);
+      expect(saved.width / saved.height, closeTo(4 / 3, 0.005));
       // Capturing says nothing: the flash and the haptic are the feedback.
       expect(find.byType(SnackBar), findsNothing);
       // No review screen: still on the live camera.
@@ -347,6 +496,21 @@ void main() {
       );
     });
 
+    testWidgets('a ratio that matches the camera output is saved byte for '
+        'byte', (tester) async {
+      // Full Screen on a 9:16 window matches the stream exactly, so nothing is
+      // re-encoded: the camera's own bytes reach the library untouched.
+      await captureOnce(
+        tester,
+        settings: const AppSettings(captureRatio: CaptureRatio.fullScreen),
+        surface: const Size(360, 640),
+      );
+
+      expect(platform.captureCount, 1);
+      expect(gallery.saved.single, platform.pictureBytes);
+      expect(shutter, findsOneWidget);
+    });
+
     testWidgets('a capture that cannot be saved explains itself and leaves the '
         'camera usable', (tester) async {
       gallery.nextError = GalException(
@@ -354,11 +518,7 @@ void main() {
         platformException: PlatformException(code: 'TEST'),
         stackTrace: StackTrace.current,
       );
-      await pumpPage(
-        tester,
-        FakePermissionService(AppPermissionStatus.granted),
-      );
-      await settle(tester);
+      await pumpNoCrop(tester);
 
       await tester.runAsync(() async {
         await tester.tap(shutter);
@@ -375,11 +535,7 @@ void main() {
     testWidgets('saving without library access asks first and stops when '
         'declined', (tester) async {
       gallery.access = false;
-      await pumpPage(
-        tester,
-        FakePermissionService(AppPermissionStatus.granted),
-      );
-      await settle(tester);
+      await pumpNoCrop(tester);
 
       await tester.runAsync(() async {
         await tester.tap(shutter);
@@ -407,11 +563,7 @@ void main() {
       tester,
     ) async {
       gallery.access = false;
-      await pumpPage(
-        tester,
-        FakePermissionService(AppPermissionStatus.granted),
-      );
-      await settle(tester);
+      await pumpNoCrop(tester);
 
       await tester.runAsync(() async {
         await tester.tap(shutter);
@@ -430,6 +582,8 @@ void main() {
       await settle(tester);
 
       expect(gallery.accessRequests, 1);
+      // No crop is needed in this configuration, so the camera's own bytes
+      // reach the library untouched.
       expect(gallery.saved.single, platform.pictureBytes);
       expect(shutter, findsOneWidget);
     });

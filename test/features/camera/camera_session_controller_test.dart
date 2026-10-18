@@ -8,6 +8,7 @@ import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/camera/domain/camera_flash_mode.dart';
 import 'package:camera_overlay/features/camera/domain/camera_session.dart';
+import 'package:camera_overlay/features/camera/domain/capture_mode.dart';
 import 'package:camera_overlay/features/camera/presentation/providers/camera_providers.dart';
 import 'package:camera_overlay/features/settings/domain/preferred_camera.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
@@ -394,6 +395,115 @@ void main() {
       expect(state.hasError, isFalse);
       expect(state.requireValue.controller, same(current.controller));
       expect(platform.liveCameras, hasLength(1));
+    });
+  });
+
+  group('video', () {
+    /// Puts the live session into video mode.
+    Future<CameraSession> filming() async {
+      await session();
+      await notifier().setCaptureMode(CaptureMode.video);
+      return settled();
+    }
+
+    test('filming opens the camera with audio; photos never do', () async {
+      await session();
+      expect(
+        platform.audioRequested.values,
+        everyElement(isFalse),
+        reason: 'a photo session must not ask for the microphone',
+      );
+
+      final video = await filming();
+
+      expect(video.captureMode, CaptureMode.video);
+      expect(platform.audioRequested.values, contains(isTrue));
+      // The camera was reopened for audio, and still only one is live.
+      expect(platform.liveCameras, hasLength(1));
+    });
+
+    test('records a clip into the captures directory', () async {
+      await filming();
+
+      expect(await notifier().startRecording(), isTrue);
+      expect((await settled()).isRecording, isTrue);
+
+      final clip = await notifier().stopRecording();
+
+      expect(clip, isNotNull);
+      expect(clip!.path, endsWith('.mp4'));
+      expect(clip.path, startsWith(temp.path));
+      expect(File(clip.path).existsSync(), isTrue);
+      expect(File(clip.path).readAsBytesSync(), platform.clipBytes);
+
+      final after = await settled();
+      expect(after.isRecording, isFalse);
+      expect(after.recordingDuration, Duration.zero);
+      expect(platform.startRecordingCount, 1);
+      expect(platform.stopRecordingCount, 1);
+    });
+
+    test('the recording clock ticks while filming', () async {
+      await filming();
+      await notifier().startRecording();
+
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+      expect(
+        (await settled()).recordingDuration.inSeconds,
+        greaterThanOrEqualTo(1),
+      );
+      await notifier().stopRecording();
+    });
+
+    test('photo mode refuses to film', () async {
+      await session();
+
+      expect(await notifier().startRecording(), isFalse);
+      expect(platform.startRecordingCount, 0);
+    });
+
+    test('a still cannot be taken while filming', () async {
+      await filming();
+      await notifier().startRecording();
+
+      expect(await notifier().capture(), isNull);
+      expect(platform.captureCount, 0);
+      await notifier().stopRecording();
+    });
+
+    test('the lens cannot be switched while filming', () async {
+      final before = await filming();
+      await notifier().startRecording();
+
+      await notifier().switchCamera();
+
+      expect((await settled()).controller, same(before.controller));
+      expect(platform.liveCameras, hasLength(1));
+      await notifier().stopRecording();
+    });
+
+    test('backgrounding abandons the recording', () async {
+      await filming();
+      await notifier().startRecording();
+
+      await notifier().handleAppLifecycle(AppLifecycleState.paused);
+      await notifier().handleAppLifecycle(AppLifecycleState.resumed);
+      await settled();
+
+      expect((await settled()).isRecording, isFalse);
+    });
+
+    test('switching back to photo closes the audio session', () async {
+      await filming();
+
+      await notifier().setCaptureMode(CaptureMode.photo);
+      final photo = await settled();
+
+      expect(photo.captureMode, CaptureMode.photo);
+      expect(photo.capabilities.supportsFlash, isTrue);
+      // The last camera opened is the photo one, without audio.
+      expect(platform.audioRequested.values.last, isFalse);
     });
   });
 

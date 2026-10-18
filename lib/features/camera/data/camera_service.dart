@@ -15,8 +15,15 @@ class CameraService {
 
   Future<List<CameraDescription>> listCameras() => availableCameras();
 
-  CameraController createController(CameraDescription description) {
-    return CameraController(description, resolutionPreset, enableAudio: false);
+  CameraController createController(
+    CameraDescription description, {
+    bool enableAudio = false,
+  }) {
+    return CameraController(
+      description,
+      resolutionPreset,
+      enableAudio: enableAudio,
+    );
   }
 
   Future<void> initialize(CameraController controller) =>
@@ -26,6 +33,14 @@ class CameraService {
 
   Future<XFile> capture(CameraController controller) =>
       controller.takePicture();
+
+  /// Starts muxing a clip. The platform recorder writes a finished file with
+  /// the right orientation and synchronised audio, so nothing here re-encodes.
+  Future<void> startVideoRecording(CameraController controller) =>
+      controller.startVideoRecording();
+
+  Future<XFile> stopVideoRecording(CameraController controller) =>
+      controller.stopVideoRecording();
 
   Future<void> setFlashMode(CameraController controller, FlashMode mode) =>
       controller.setFlashMode(mode);

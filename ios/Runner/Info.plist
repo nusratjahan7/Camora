@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Veylora draws your reference image over the live camera preview so you can line up your shot. The camera is only used while the shooting screen is open.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Veylora records sound while you film a clip. Audio is captured only while recording, and nothing leaves your device.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Veylora needs access to your photo library so you can choose a reference image to overlay. Photos never leave your device.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

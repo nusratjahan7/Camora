@@ -8,6 +8,7 @@ import '../../../../shared/widgets/app_scaffold.dart';
 import '../../../../shared/widgets/app_slider.dart';
 import '../../../../shared/widgets/error_view.dart';
 import '../../../../shared/widgets/loading_view.dart';
+import '../../domain/capture_ratio.dart';
 import '../../domain/preferred_camera.dart';
 import '../providers/settings_controller.dart';
 
@@ -73,6 +74,43 @@ class SettingsPage extends ConsumerWidget {
               'while shooting.',
               style: context.textStyles.bodySmall?.copyWith(
                 color: context.colors.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Text('Capture ratio', style: context.textStyles.titleSmall),
+            const SizedBox(height: AppSpacing.sm),
+            SegmentedButton<CaptureRatio>(
+              showSelectedIcon: false,
+              segments: <ButtonSegment<CaptureRatio>>[
+                for (final ratio in CaptureRatio.values)
+                  ButtonSegment<CaptureRatio>(
+                    value: ratio,
+                    label: Text(ratio.label),
+                  ),
+              ],
+              selected: <CaptureRatio>{settings.captureRatio},
+              onSelectionChanged: (selection) => ref
+                  .read(settingsControllerProvider.notifier)
+                  .setCaptureRatio(selection.first),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'What the preview is framed to, and what a photo is cropped to. '
+              'Switching it never restarts the camera.',
+              style: context.textStyles.bodySmall?.copyWith(
+                color: context.colors.onSurfaceVariant,
+              ),
+            ),
+            SwitchListTile(
+              value: settings.showSensorSpill,
+              onChanged: (value) => ref
+                  .read(settingsControllerProvider.notifier)
+                  .setShowSensorSpill(value),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Show sensor spill'),
+              subtitle: const Text(
+                'Dim, rather than hide, the parts of the camera stream that '
+                'fall outside the capture frame.',
               ),
             ),
             SwitchListTile(

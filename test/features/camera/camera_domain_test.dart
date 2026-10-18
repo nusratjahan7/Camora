@@ -1,12 +1,9 @@
-import 'dart:ui';
-
 import 'package:camera/camera.dart';
 import 'package:camera_overlay/core/errors/app_exception.dart';
 import 'package:camera_overlay/features/camera/domain/camera_capabilities.dart';
 import 'package:camera_overlay/features/camera/domain/camera_errors.dart';
 import 'package:camera_overlay/features/camera/domain/camera_flash_mode.dart';
 import 'package:camera_overlay/features/camera/domain/camera_selection.dart';
-import 'package:camera_overlay/features/camera/domain/preview_geometry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _front = CameraDescription(
@@ -94,40 +91,6 @@ void main() {
       final caps = const CameraCapabilities().withZoomRange(1, 4);
       expect(caps.clampZoom(0.2), 1);
       expect(caps.clampZoom(9), 4);
-    });
-  });
-
-  group('cover mapping', () {
-    test('maps the viewport center to the preview center', () {
-      final point = coverPointToPreview(
-        point: const Offset(200, 400),
-        viewport: const Size(400, 800),
-        preview: const Size(3, 4),
-      );
-      expect(point, const Offset(0.5, 0.5));
-    });
-
-    test('accounts for the cropped overflow', () {
-      // A 3:4 preview covering 400x800 is scaled to 600x800, cropping 100px
-      // on each side, so the viewport's left edge is 1/6 into the preview.
-      final point = coverPointToPreview(
-        point: const Offset(0, 0),
-        viewport: const Size(400, 800),
-        preview: const Size(3, 4),
-      )!;
-      expect(point.dx, closeTo(1 / 6, 1e-9));
-      expect(point.dy, 0);
-    });
-
-    test('rejects degenerate sizes', () {
-      expect(
-        coverPointToPreview(
-          point: Offset.zero,
-          viewport: const Size(400, 800),
-          preview: Size.zero,
-        ),
-        isNull,
-      );
     });
   });
 

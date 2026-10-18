@@ -6,6 +6,9 @@ enum GalleryEntryKind {
   /// A photo the camera captured.
   photo,
 
+  /// A clip the camera filmed.
+  video,
+
   /// A reference image that was floated over the preview.
   reference,
 }

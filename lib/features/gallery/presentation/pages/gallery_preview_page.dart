@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../../../app/router/app_routes.dart';
 import '../../../../core/errors/app_exception.dart';
@@ -17,7 +18,8 @@ import '../../domain/gallery_entry.dart';
 import '../providers/gallery_history_provider.dart';
 
 /// Full-screen look at one history entry, with the actions that make sense for
-/// it: share and delete for a photo, plus "use again" for a reference.
+/// it: share and delete for a photo or a clip, plus "use again" for a
+/// reference.
 class GalleryPreviewPage extends ConsumerWidget {
   const GalleryPreviewPage({super.key, required this.entry});
 
@@ -98,10 +100,16 @@ class GalleryPreviewPage extends ConsumerWidget {
       builder: (context) => AlertDialog(
         title: const Text('Remove from gallery?'),
         content: Text(
-          entry.kind == GalleryEntryKind.photo
-              ? 'This removes the app\'s copy. Photos already saved to your '
-                    'device library are not affected.'
-              : 'This removes the reference image from this device.',
+          switch (entry.kind) {
+            GalleryEntryKind.photo =>
+              'This removes the app\'s copy. Photos already saved to your '
+                  'device library are not affected.',
+            GalleryEntryKind.video =>
+              'This removes the app\'s copy. Clips already saved to your '
+                  'device library are not affected.',
+            GalleryEntryKind.reference =>
+              'This removes the reference image from this device.',
+          },
         ),
         actions: <Widget>[
           TextButton(
@@ -155,24 +163,14 @@ class _Preview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (missing) {
-      final onScrim = context.cameraTheme.onScrim;
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(Icons.broken_image_outlined, size: 40, color: onScrim),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                'This file is no longer on the device.',
-                textAlign: TextAlign.center,
-                style: context.textStyles.bodyMedium?.copyWith(color: onScrim),
-              ),
-            ],
-          ),
-        ),
+      return const _Message(
+        icon: Icons.broken_image_outlined,
+        text: 'This file is no longer on the device.',
       );
+    }
+
+    if (entry.kind == GalleryEntryKind.video) {
+      return _VideoPreview(path: entry.path);
     }
 
     final media = MediaQuery.of(context);
@@ -189,6 +187,138 @@ class _Preview extends StatelessWidget {
           fit: BoxFit.contain,
           cacheWidth: cacheWidth,
           gaplessPlayback: true,
+        ),
+      ),
+    );
+  }
+}
+
+/// Plays a clip with a minimal transport: tap the frame to play or pause.
+///
+/// Playback is the platform player's job, so a clip keeps the orientation and
+/// synchronised audio it was recorded with. A clip the device cannot play
+/// explains itself instead of failing silently.
+class _VideoPreview extends StatefulWidget {
+  const _VideoPreview({required this.path});
+
+  final String path;
+
+  @override
+  State<_VideoPreview> createState() => _VideoPreviewState();
+}
+
+class _VideoPreviewState extends State<_VideoPreview> {
+  VideoPlayerController? _controller;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _open();
+  }
+
+  Future<void> _open() async {
+    final controller = VideoPlayerController.file(File(widget.path));
+    try {
+      await controller.initialize();
+      await controller.setLooping(true);
+    } catch (_) {
+      // Playback is the platform player's job. When it cannot start, say so
+      // rather than spinning forever. Disposal is not awaited: a controller
+      // that never finished initialising never finishes disposing either.
+      controller.dispose().catchError((Object _) {});
+      if (mounted) setState(() => _failed = true);
+      return;
+    }
+
+    if (!mounted) {
+      controller.dispose().catchError((Object _) {});
+      return;
+    }
+    setState(() => _controller = controller);
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggle(VideoPlayerValue value) async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (value.isPlaying) {
+      await controller.pause();
+    } else {
+      await controller.play();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) {
+      return const _Message(
+        icon: Icons.videocam_off_outlined,
+        text: 'This clip could not be played on this device.',
+      );
+    }
+
+    final controller = _controller;
+    if (controller == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Center(
+      child: GestureDetector(
+        key: const ValueKey<String>('gallery-preview-video'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _toggle(controller.value),
+        child: ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: controller,
+          builder: (context, value, child) => AspectRatio(
+            aspectRatio: value.aspectRatio,
+            child: Stack(
+              alignment: Alignment.center,
+              children: <Widget>[
+                VideoPlayer(controller),
+                if (!value.isPlaying)
+                  const Icon(
+                    Icons.play_circle_fill,
+                    size: 64,
+                    color: Colors.white70,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Message extends StatelessWidget {
+  const _Message({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final onScrim = context.cameraTheme.onScrim;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 40, color: onScrim),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: context.textStyles.bodyMedium?.copyWith(color: onScrim),
+            ),
+          ],
         ),
       ),
     );

@@ -28,6 +28,7 @@ class GalleryTile extends StatelessWidget {
       GalleryEntryKind.photo => entry.isComposite
           ? 'Composite photo'
           : 'Photo',
+      GalleryEntryKind.video => 'Video',
       GalleryEntryKind.reference => 'Reference image',
     };
     return missing ? '$what, ${entry.label}, file missing' : '$what, ${entry.label}';
@@ -82,6 +83,9 @@ class _Thumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (missing) return const _BrokenImage();
+    // A clip has no poster frame yet, so the tile says what it is rather than
+    // handing a video file to the image decoder and failing.
+    if (entry.kind == GalleryEntryKind.video) return const _VideoThumbnail();
 
     final dpr = MediaQuery.devicePixelRatioOf(context);
     return Image.file(
@@ -90,6 +94,20 @@ class _Thumbnail extends StatelessWidget {
       fit: BoxFit.cover,
       cacheWidth: (GalleryTile._edge * dpr).round(),
       errorBuilder: (context, error, stackTrace) => const _BrokenImage(),
+    );
+  }
+}
+
+/// Play glyph standing in for a clip's poster frame.
+class _VideoThumbnail extends StatelessWidget {
+  const _VideoThumbnail();
+
+  @override
+  Widget build(BuildContext context) {
+    return Icon(
+      Icons.play_circle_outline,
+      size: 32,
+      color: context.colors.onSurface.withValues(alpha: 0.7),
     );
   }
 }

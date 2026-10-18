@@ -6,6 +6,7 @@ import '../../../core/errors/app_error_handler.dart';
 import '../../../core/storage/key_value_store.dart';
 import '../../../core/storage/shared_preferences_store.dart';
 import '../domain/app_settings.dart';
+import '../domain/capture_ratio.dart';
 import '../domain/preferred_camera.dart';
 
 class SettingsRepository {
@@ -20,6 +21,8 @@ class SettingsRepository {
     final grid = await store.getBool(StorageKeys.showAlignmentGrid);
     final camera = await store.getString(StorageKeys.preferredCamera);
     final haptics = await store.getBool(StorageKeys.hapticsEnabled);
+    final ratio = await store.getString(StorageKeys.captureRatio);
+    final spill = await store.getBool(StorageKeys.showSensorSpill);
 
     return AppSettings(
       themeMode: _themeModeFromName(themeModeName),
@@ -28,6 +31,8 @@ class SettingsRepository {
       showAlignmentGrid: grid ?? AppSettings.defaults.showAlignmentGrid,
       preferredCamera: _cameraFromName(camera),
       hapticsEnabled: haptics ?? AppSettings.defaults.hapticsEnabled,
+      captureRatio: _ratioFromName(ratio),
+      showSensorSpill: spill ?? AppSettings.defaults.showSensorSpill,
     );
   }, operation: 'load settings');
 
@@ -46,6 +51,11 @@ class SettingsRepository {
       settings.preferredCamera.name,
     );
     await store.setBool(StorageKeys.hapticsEnabled, settings.hapticsEnabled);
+    await store.setString(
+      StorageKeys.captureRatio,
+      settings.captureRatio.name,
+    );
+    await store.setBool(StorageKeys.showSensorSpill, settings.showSensorSpill);
   }, operation: 'save settings');
 
   ThemeMode _themeModeFromName(String? name) => ThemeMode.values.firstWhere(
@@ -58,6 +68,11 @@ class SettingsRepository {
         (camera) => camera.name == name,
         orElse: () => AppSettings.defaults.preferredCamera,
       );
+
+  CaptureRatio _ratioFromName(String? name) => CaptureRatio.values.firstWhere(
+    (ratio) => ratio.name == name,
+    orElse: () => AppSettings.defaults.captureRatio,
+  );
 }
 
 final settingsRepositoryProvider = Provider<SettingsRepository>(

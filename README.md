@@ -6,13 +6,15 @@
 
 A Flutter app that lets you line up a shot by floating a reference image from your
 gallery over the device's live camera preview, tuning its opacity, and capturing the
-shot. The reference is only a guide and is never saved into your photos. Built for
-Android and iOS.
+shot — a photo or a clip, framed to a ratio you pick. The reference is only a guide
+and is never saved into your media. Built for Android and iOS.
 
-> **Capture and saving are live.** The camera preview, the reference overlay and
-> its opacity/position controls, and photo capture all work. The shutter saves the
-> camera's own image straight to the photo library — the preview, the controls and
-> the reference overlay are never part of it — and returns to the camera.
+> **Capture, video and saving are live.** The camera preview, the reference overlay
+> and its opacity/position controls, the capture-ratio framing, photo capture and
+> video recording all work. The shutter saves the camera's own image — cropped to the
+> frame you saw when the ratio calls for it, and otherwise byte for byte — straight to
+> the photo library; the preview, the controls and the reference overlay are never part
+> of it. Clips are muxed by the platform recorder and saved as they were filmed.
 
 ---
 
@@ -31,8 +33,10 @@ Dependencies (latest mutually compatible stable releases, resolved by `flutter p
 | --- | --- | --- |
 | `flutter_riverpod` | 3.4.3 | state management |
 | `go_router` | 18.0.2 | declarative routing |
-| `camera` | 0.12.1 | live camera preview |
+| `camera` | 0.12.1 | live camera preview, stills and video |
 | `image_picker` | 1.2.4 | picking a reference image |
+| `video_player` | 2.14.1 | playing recorded clips in the gallery |
+| `image` | 4.12.0 | cropping a still to the selected capture ratio |
 | `gal` | 2.3.3 | saving captures to the photo gallery |
 | `share_plus` | 13.3.1 | system share sheet |
 | `permission_handler` | 13.0.2 | runtime permission requests |
@@ -182,7 +186,8 @@ sheet explains the reason before the system prompt appears.
 | --- | --- | --- |
 | Camera | On opening the shooting screen | Show the live preview that the reference image is aligned against. Used only while that screen is open. |
 | Photo library (read) | Never prompted | Reference images come from the system Photo Picker (Android) / PHPicker (iOS), which need no permission. |
-| Photo library (add) | When saving a capture | Write the finished photo back to the gallery. |
+| Photo library (add) | When saving a capture | Write the finished photo or clip back to the gallery. |
+| Microphone | The first time you start filming | Record sound into your clips. Photos never use it. |
 
 Nothing leaves the device — there is no backend, account or analytics.
 
@@ -192,8 +197,8 @@ Nothing leaves the device — there is no backend, account or analytics.
 <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
     android:maxSdkVersion="29" />
-<!-- Audio is never recorded, so the camera plugin's RECORD_AUDIO is stripped. -->
-<uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
+<!-- Captured only while a clip is being filmed. -->
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-feature android:name="android.hardware.camera.any" android:required="true" />
 ```
 
@@ -205,6 +210,8 @@ no storage permission at all.
 
 ```xml
 <key>NSCameraUsageDescription</key>
+<string>…</string>
+<key>NSMicrophoneUsageDescription</key>
 <string>…</string>
 <key>NSPhotoLibraryUsageDescription</key>
 <string>…</string>
@@ -228,10 +235,13 @@ rm -rf ~/Library/Developer/Xcode/DerivedData
 - **State management** — Riverpod 3. `CameraSessionController` (an auto-dispose
   `AsyncNotifier`) owns the `CameraController`: it opens the rear camera by default,
   releases it when the app leaves the foreground and reopens the same lens on return,
-  guards against overlapping captures, and coalesces zoom calls. Widgets never touch the
-  plugin; `CameraService` is the only seam over `package:camera`. Camera providers opt
-  out of Riverpod's automatic retry, so failures surface once with an explicit retry. Settings use a
-  keep-alive `AsyncNotifier` with optimistic updates.
+  guards against overlapping captures, coalesces zoom calls, and owns the photo/video
+  mode and the recording clock. Widgets never touch the plugin; `CameraService` is the
+  only seam over `package:camera`. Camera providers opt out of Riverpod's automatic
+  retry, so failures surface once with an explicit retry. Settings use a keep-alive
+  `AsyncNotifier` with optimistic updates.
+- **Framing** — `FrameGeometry` is the one place the capture frame, the focus mapping
+  and the still crop are worked out, so the preview and the saved file always agree.
 - **Routing** — a single `GoRouter` provided by `appRouterProvider`, with a shared
   `errorBuilder` for unknown routes.
 - **Error handling** — every failure is normalised to a sealed `AppException`
@@ -271,17 +281,78 @@ stay legible over any scene without boxing the feed in.
 | Control | Behaviour |
 |---|---|
 | Close (top left) | Leaves the shooting screen |
+| Recording clock (top left) | Appears beside close while a clip is filming: a red dot and the elapsed time |
+| Ratio (top right) | Cycles 4:3 → 16:9 → 1:1 → Full; greys out while filming, because a clip records at the camera's native ratio |
 | Grid (top right) | Shows or hides the rule-of-thirds guide; the choice is remembered |
 | Flash (top right) | Cycles off → auto → on → torch on the rear camera; hidden on the front |
 | Gallery (bottom left) | Opens the app's own history (see **Gallery and history**) |
 | Reference (bottom left) | Chooses the reference image to float over the preview |
-| Shutter (bottom centre) | Captures the camera's own image |
-| Switch (bottom right) | Front / rear; hidden when the device has only one camera |
+| Shutter (bottom centre) | Captures the camera's own image, or films a clip in video mode |
+| Switch (bottom right) | Front / rear; hidden when the device has only one camera, and disabled while filming |
+| Mode (bottom right) | Photo ⇄ video; the disc turns red in video mode and becomes a stop square while filming |
 | Zoom pills | Lens stops (0.5× / 1× / 2×…) and drag-to-zoom; hidden when the camera cannot zoom |
 
 Every control has a 48 dp minimum touch target and a semantics label, and the
 bars respect the safe area in both portrait and landscape. On short (landscape)
 screens the overlay tray starts folded to its header.
+
+## Capture ratio
+
+The ratio frames the shot: the preview is masked to it, and a photo is cropped to
+match. It is a framing choice only — the camera keeps running at its own
+resolution, and **switching it never restarts the session**.
+
+| Mode | Shape |
+|---|---|
+| 4:3 | The default |
+| 16:9 | Widescreen |
+| 1:1 | Square |
+| Full | Whatever the available preview area actually is, measured after the safe-area insets — never a hard-coded 9:16 |
+
+The frame is the largest rect of the chosen shape inside the available preview
+area. The rest of the camera stream is **dimmed, not hidden**, so the part of the
+sensor the shot leaves out stays visible; the caption inside the frame shows the
+camera stream's size and the size the capture will be
+(`1920×1080 → 1440×1080`). Settings has a switch to hide the spill entirely.
+
+The reference overlay, the alignment grid and the focus reticle are all scoped to
+the frame, so the overlay stays aligned with the visible framing when the ratio
+changes — and switching it never touches the overlay's opacity, position, scale,
+rotation or lock state.
+
+### Stills: crop only when it is needed
+
+- If the selected ratio already matches the camera's output, the **camera's own
+  bytes are saved untouched** — no decode, no re-encode.
+- Otherwise the still is decoded, oriented, cropped to exactly the frame and
+  encoded once at quality 95, off the UI thread. EXIF is dropped because the
+  orientation is baked into the pixels.
+- If the crop cannot be decoded or encoded, the original bytes are kept: a
+  capture is never lost to a failed crop.
+
+### Video
+
+Clips are muxed by the platform recorder, which handles orientation and
+audio/video synchronisation. **A clip is never transcoded**, so it is recorded at
+the camera's native ratio (16:9 for 720p/1080p) — cropping a clip to an arbitrary
+ratio needs a frame-accurate transcoder, which this app does not ship. The ratio
+control says so rather than pretending to apply.
+
+### Device notes
+
+- `package:camera` exposes **no aspect-ratio API and no way to enumerate supported
+  output sizes**, so a ratio is achieved by masking the preview and cropping the
+  still in Dart. The live preview crop is therefore a presentation choice, while the
+  sensor capture stays full-frame until the crop step.
+- The crop assumes the still shares the preview stream's aspect ratio (true for
+  `ResolutionPreset.veryHigh`). If a device disagrees, the crop is computed from the
+  still's own dimensions and stays visually equivalent.
+- `veryHigh` is 1080p, which is **16:9**, so on most devices 4:3 is a centred crop of
+  the stream rather than a native capture size.
+- Entering video mode is the one change that reopens the camera, because audio is only
+  opened for video; the ratio is pure layout and never restarts the session.
+- Re-encoding a cropped still drops EXIF (orientation is baked into the pixels).
+  Uncropped captures keep their metadata.
 
 ## Settings
 
@@ -291,9 +362,11 @@ Preferences are kept on the device and restored the next time the app launches:
 |---|---|
 | Theme | System, dark or light; the camera screen stays dark either way |
 | Preferred camera | The lens the shooting screen opens with (rear or front); you can still switch while shooting |
+| Capture ratio | 4:3 (default) · 16:9 · 1:1 · Full |
+| Sensor spill | Dim, rather than hide, the parts of the stream outside the frame |
 | Alignment grid | Rule-of-thirds guide over the preview; also toggled from the camera bar |
 | Reference image opacity | The opacity a new reference image starts at |
-| Haptic feedback | Short vibrations when you tap a control or take a photo |
+| Haptic feedback | Short vibrations when you tap a control or take a photo or clip |
 
 The grid and the reference overlay are guides only — neither is ever part of a
 captured photo.
@@ -334,42 +407,49 @@ Notes:
 
 ## Capture and saving
 
-Tap the shutter to capture through the active `CameraController`. The camera's own
-file is written to the system photo library byte for byte — no resize, no
-re-encode — and the app stays on the live preview. There is no review screen and
-nothing to dismiss: the photo is already in the gallery when the flash clears.
+Tap the shutter to capture through the active `CameraController`. When the capture
+ratio already matches what the camera produces, the camera's own file is written to
+the system photo library **byte for byte** — no resize, no re-encode. Otherwise it is
+cropped to the frame the preview showed with a single high-quality re-encode (see
+**Capture ratio**). Either way the app stays on the live preview: there is no review
+screen and nothing to dismiss, because the photo is already in the gallery when the
+flash clears.
 
-The reference overlay is a guide only. It is never composited into the photo, and
-a test compares the saved bytes with the camera's output. Saving requests the photo
-library permission only at that moment, with a rationale sheet first, and stays
-quiet afterwards — the flash and the haptic are the confirmation, and a message
-only appears when something goes wrong. The shutter is guarded while a capture is
-in flight, so repeated taps cannot save twice. The app keeps its own copy of the
-capture, which is what the gallery below lists.
+In video mode the same button starts filming and then stops it; the platform recorder
+writes the clip and it is moved into the app's own captures directory as `Veylora_<ms>.mp4`
+and handed to the library untouched.
+
+The reference overlay is a guide only. It is never composited into a photo or a clip.
+Saving requests the photo library permission only at that moment, with a rationale
+sheet first, and the microphone is requested only when the first clip starts. Both stay
+quiet afterwards — the flash and the haptic are the confirmation, and a message only
+appears when something goes wrong. The shutter is guarded while a capture is in flight,
+so repeated taps cannot save twice. The app keeps its own copy of every capture, which
+is what the gallery below lists.
 
 ## Gallery and history
 
-**Gallery** on the home screen opens the app's own history, split into two tabs:
+**Gallery** on the home screen opens the app's own history, split into three tabs:
 
 | Tab | What it holds |
 |---|---|
 | Photos | Every photo this app captured, from the app's own copy of the file |
+| Videos | Every clip this app filmed |
 | References | Every reference image that has been floated over the preview, so it can be picked again without reopening the system picker |
 
-Thumbnails are decoded at thumbnail size, so a 12 MP file never lands in memory
-just to draw a small square. Tapping one opens a full-screen preview offering:
+Photo thumbnails are decoded at thumbnail size, so a 12 MP file never lands in memory
+just to draw a small square; a clip is drawn as a play glyph (poster frames are a
+follow-up). Tapping one opens a full-screen preview offering:
 
 | Action | Behaviour |
 |---|---|
 | Share | Opens the system share sheet (`share_plus`), anchored to the button on iPad |
-| Delete | Forgets the entry and deletes the app's copy; photos already in the system library are untouched |
+| Delete | Forgets the entry and deletes the app's copy; files already in the system library are untouched |
+| Play / pause | Clips only, played by `video_player` with the orientation and audio they were recorded with |
 | Use as reference | Reference images only: loads it straight back onto the camera as the guide |
 
-Each photo entry records whether it is the camera's original or a composite
-export, and composites are badged in the grid so the two are never confused.
-
 Only a path, a kind, an export flag and a timestamp are stored — a JSON list in
-shared preferences — so the history stays light and the images stay on disk.
+shared preferences — so the history stays light and the media stays on disk.
 Files can be removed outside the app, so every entry is checked on load: a missing
 file is marked **Missing** and the preview explains it instead of failing.
 Nothing leaves the device: there is no account, no synchronisation and no backend.

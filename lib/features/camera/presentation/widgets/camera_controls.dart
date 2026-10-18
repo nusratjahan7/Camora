@@ -11,7 +11,9 @@ import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/glass.dart';
 import '../../domain/camera_flash_mode.dart';
 import '../../domain/camera_session.dart';
+import '../../domain/capture_mode.dart';
 import 'alignment_grid.dart';
+import 'camera_ratio_pill.dart';
 
 class CameraCloseButton extends StatelessWidget {
   const CameraCloseButton({super.key});
@@ -108,7 +110,13 @@ class CameraTopBar extends StatelessWidget {
           child: Row(
             children: <Widget>[
               const CameraCloseButton(),
+              if (session.isRecording) ...<Widget>[
+                const SizedBox(width: AppSpacing.sm),
+                _RecordingChip(duration: session.recordingDuration),
+              ],
               const Spacer(),
+              const CaptureRatioButton(),
+              const SizedBox(width: AppSpacing.sm),
               const GridToggleButton(),
               if (session.capabilities.supportsFlash) ...<Widget>[
                 const SizedBox(width: AppSpacing.sm),
@@ -142,12 +150,91 @@ class CameraTopBar extends StatelessWidget {
   };
 }
 
+/// Elapsed-time chip shown beside the close button while a clip is filming.
+class _RecordingChip extends StatelessWidget {
+  const _RecordingChip({required this.duration});
+
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final danger = context.colors.error;
+
+    return Semantics(
+      label: 'Recording, $minutes minutes $seconds seconds elapsed',
+      excludeSemantics: true,
+      child: GlassSurface(
+        borderRadius: AppRadius.pillAll,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: SizedBox(
+          height: 30,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: danger),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                '$minutes:$seconds',
+                key: const ValueKey<String>('camera-recording-timer'),
+                style: context.textStyles.labelMedium?.copyWith(
+                  color: context.cameraTheme.onScrim,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: tabularFigures,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Switches between taking stills and filming clips.
+///
+/// Shows the mode you would move *to*, like a toggle: a video icon while
+/// taking photos, a camera icon while filming.
+class CameraModeButton extends StatelessWidget {
+  const CameraModeButton({
+    super.key,
+    required this.mode,
+    required this.onPressed,
+  });
+
+  final CaptureMode mode;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassIconButton(
+      key: const ValueKey<String>('camera-mode'),
+      icon: mode.isVideo
+          ? Icons.photo_camera_outlined
+          : Icons.videocam_outlined,
+      diameter: CameraBottomBar.sideSlot,
+      iconSize: 24,
+      tooltip: mode.isVideo ? 'Switch to photo' : 'Switch to video',
+      active: mode.isVideo,
+      onPressed: onPressed,
+    );
+  }
+}
+
 class CameraBottomBar extends StatelessWidget {
   const CameraBottomBar({
     super.key,
     required this.session,
     required this.onCapture,
+    required this.onStartRecording,
+    required this.onStopRecording,
     required this.onSwitchCamera,
+    required this.onToggleMode,
     required this.onZoomChanged,
     this.leading,
     this.accessory,
@@ -155,7 +242,10 @@ class CameraBottomBar extends StatelessWidget {
 
   final CameraSession session;
   final VoidCallback onCapture;
+  final VoidCallback onStartRecording;
+  final VoidCallback onStopRecording;
   final VoidCallback onSwitchCamera;
+  final VoidCallback onToggleMode;
   final ValueChanged<double> onZoomChanged;
 
   /// Shown left of the shutter, e.g. the gallery and reference-image buttons.
@@ -169,7 +259,15 @@ class CameraBottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final busy = session.isCapturing;
+    final capturing = session.isCapturing;
+    final recording = session.isRecording;
+    final video = session.captureMode.isVideo;
+    // The shutter stays live while filming, so the same button stops the clip.
+    final onShutter = capturing
+        ? null
+        : video
+        ? (recording ? onStopRecording : onStartRecording)
+        : onCapture;
 
     return _Scrim(
       fromTop: false,
@@ -210,24 +308,40 @@ class CameraBottomBar extends StatelessWidget {
                       ),
                     ),
                     ShutterButton(
-                      busy: busy,
-                      onPressed: busy ? null : onCapture,
+                      busy: capturing,
+                      video: video,
+                      recording: recording,
+                      onPressed: onShutter,
                     ),
                     Expanded(
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerRight,
-                        child: GlassIconButton(
-                          key: const ValueKey<String>('camera-switch'),
-                          icon: Icons.cameraswitch_rounded,
-                          diameter: sideSlot,
-                          iconSize: 24,
-                          tooltip: session.isFrontFacing
-                              ? 'Switch to rear camera'
-                              : 'Switch to front camera',
-                          onPressed: session.canSwitchCamera && !busy
-                              ? onSwitchCamera
-                              : null,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            GlassIconButton(
+                              key: const ValueKey<String>('camera-switch'),
+                              icon: Icons.cameraswitch_rounded,
+                              diameter: sideSlot,
+                              iconSize: 24,
+                              tooltip: session.isFrontFacing
+                                  ? 'Switch to rear camera'
+                                  : 'Switch to front camera',
+                              onPressed: session.canSwitchCamera &&
+                                      !capturing &&
+                                      !recording
+                                  ? onSwitchCamera
+                                  : null,
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            CameraModeButton(
+                              mode: session.captureMode,
+                              onPressed: capturing || recording
+                                  ? null
+                                  : onToggleMode,
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -385,10 +499,20 @@ class _ZoomStop extends StatelessWidget {
 }
 
 class ShutterButton extends StatefulWidget {
-  const ShutterButton({super.key, required this.busy, this.onPressed});
+  const ShutterButton({
+    super.key,
+    required this.busy,
+    this.onPressed,
+    this.video = false,
+    this.recording = false,
+  });
 
   final bool busy;
   final VoidCallback? onPressed;
+
+  /// Video mode: the disc turns red, and becomes a stop square while filming.
+  final bool video;
+  final bool recording;
 
   @override
   State<ShutterButton> createState() => _ShutterButtonState();
@@ -405,16 +529,29 @@ class _ShutterButtonState extends State<ShutterButton> {
   Widget build(BuildContext context) {
     final theme = context.cameraTheme;
     final enabled = widget.onPressed != null;
-    final discScale = widget.busy
+    final active = enabled || widget.busy || widget.recording;
+    final danger = context.colors.error;
+    final disc = widget.video ? danger : theme.shutterInner;
+    final ring = widget.recording ? danger : theme.shutterRing;
+    final discScale = widget.recording
+        ? 0.46
+        : widget.busy
         ? 0.72
         : _pressed
         ? 0.88
         : 1.0;
+    final label = widget.recording
+        ? 'Stop recording'
+        : widget.video
+        ? 'Start recording'
+        : widget.busy
+        ? 'Capturing photo'
+        : 'Capture photo';
 
     return Semantics(
       button: true,
       enabled: enabled,
-      label: widget.busy ? 'Capturing photo' : 'Capture photo',
+      label: label,
       child: GestureDetector(
         key: const ValueKey<String>('camera-shutter'),
         onTapDown: enabled ? (_) => _setPressed(true) : null,
@@ -431,9 +568,7 @@ class _ShutterButtonState extends State<ShutterButton> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: theme.shutterRing.withValues(
-                      alpha: enabled || widget.busy ? 1 : 0.5,
-                    ),
+                    color: ring.withValues(alpha: active ? 1 : 0.5),
                     width: 4,
                   ),
                 ),
@@ -452,14 +587,19 @@ class _ShutterButtonState extends State<ShutterButton> {
                 scale: discScale,
                 duration: const Duration(milliseconds: 110),
                 curve: Curves.easeOut,
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.easeOut,
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: theme.shutterInner.withValues(
-                      alpha: enabled || widget.busy ? 1 : 0.5,
+                    // A 64px box with a 32px radius is a circle, so the disc
+                    // can morph into the stop square without ever changing
+                    // shape (which a BoxDecoration cannot tween).
+                    borderRadius: BorderRadius.circular(
+                      widget.recording ? 9 : 32,
                     ),
+                    color: disc.withValues(alpha: active ? 1 : 0.5),
                     boxShadow: <BoxShadow>[
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.25),

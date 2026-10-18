@@ -37,6 +37,13 @@ class GallerySaverService {
     operation: 'save image to gallery',
   );
 
+  /// Saves a clip to the library. The platform muxer already wrote a finished
+  /// file, so it is handed over as-is.
+  Future<void> saveVideo(String path) => errorHandler.guard(
+    () => Gal.putVideo(path, album: album),
+    operation: 'save video to gallery',
+  );
+
   Future<void> openGallery() =>
       errorHandler.guard(Gal.open, operation: 'open gallery');
 }

@@ -25,7 +25,7 @@ class GalleryPage extends ConsumerStatefulWidget {
 
 class _GalleryPageState extends ConsumerState<GalleryPage>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 2, vsync: this);
+  late final TabController _tabs = TabController(length: 3, vsync: this);
 
   @override
   void dispose() {
@@ -53,6 +53,7 @@ class _GalleryPageState extends ConsumerState<GalleryPage>
             controller: _tabs,
             tabs: const <Widget>[
               Tab(text: 'Photos'),
+              Tab(text: 'Videos'),
               Tab(text: 'References'),
             ],
           ),
@@ -70,6 +71,7 @@ class _GalleryPageState extends ConsumerState<GalleryPage>
                 controller: _tabs,
                 children: <Widget>[
                   _EntryGrid(kind: GalleryEntryKind.photo, history: value),
+                  _EntryGrid(kind: GalleryEntryKind.video, history: value),
                   _EntryGrid(kind: GalleryEntryKind.reference, history: value),
                 ],
               ),
@@ -121,7 +123,24 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = context.colors;
-    final isPhoto = kind == GalleryEntryKind.photo;
+    final (icon, title, body) = switch (kind) {
+      GalleryEntryKind.photo => (
+        Icons.photo_camera_outlined,
+        'No photos yet',
+        'Photos you capture are kept here, on this device.',
+      ),
+      GalleryEntryKind.video => (
+        Icons.videocam_outlined,
+        'No videos yet',
+        'Clips you film are kept here, on this device.',
+      ),
+      GalleryEntryKind.reference => (
+        Icons.collections_outlined,
+        'No reference images yet',
+        'Images you float over the preview are kept here so you '
+            'can pick them again.',
+      ),
+    };
 
     return Center(
       child: Padding(
@@ -129,25 +148,12 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Icon(
-              isPhoto
-                  ? Icons.photo_camera_outlined
-                  : Icons.collections_outlined,
-              size: 40,
-              color: scheme.onSurfaceVariant,
-            ),
+            Icon(icon, size: 40, color: scheme.onSurfaceVariant),
             const SizedBox(height: AppSpacing.lg),
-            Text(
-              isPhoto ? 'No photos yet' : 'No reference images yet',
-              textAlign: TextAlign.center,
-              style: context.textStyles.titleMedium,
-            ),
+            Text(title, textAlign: TextAlign.center, style: context.textStyles.titleMedium),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              isPhoto
-                  ? 'Photos you capture are kept here, on this device.'
-                  : 'Images you float over the preview are kept here so you '
-                        'can pick them again.',
+              body,
               textAlign: TextAlign.center,
               style: context.textStyles.bodyMedium?.copyWith(
                 color: scheme.onSurfaceVariant,

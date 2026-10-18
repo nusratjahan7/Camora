@@ -49,6 +49,19 @@ class FakeCameraPlatform extends CameraPlatform {
   /// Called before a camera is disposed, to observe app state at that moment.
   void Function(int cameraId)? onDispose;
 
+  /// Whether each created camera was opened with audio, so tests can check
+  /// that a photo session never asks for the microphone.
+  final Map<int, bool> audioRequested = <int, bool>{};
+
+  /// What a finished clip contains.
+  List<int> clipBytes = const <int>[0, 1, 2, 3, 4];
+
+  int startRecordingCount = 0;
+  int stopRecordingCount = 0;
+  int? recordingCameraId;
+
+  bool get isRecording => recordingCameraId != null;
+
   int _nextId = 0;
   final Map<int, CameraDescription> created = <int, CameraDescription>{};
   final Set<int> disposed = <int>{};
@@ -60,10 +73,11 @@ class FakeCameraPlatform extends CameraPlatform {
   int captureCount = 0;
 
   /// What every capture writes: a real 9:16 portrait JPEG, matching the
-  /// 1920x1080 preview stream, so composites can be rendered from it.
+  /// 1920x1080 preview stream in display orientation, so crops land on whole
+  /// pixels (4:3 of this still is exactly 540x405).
   final List<int> pictureBytes = img.encodeJpg(
     img.fill(
-      img.Image(width: 54, height: 96),
+      img.Image(width: 540, height: 960),
       color: img.ColorRgb8(40, 90, 140),
     ),
     quality: 90,
@@ -97,6 +111,7 @@ class FakeCameraPlatform extends CameraPlatform {
   ) async {
     final id = _nextId++;
     created[id] = cameraDescription;
+    audioRequested[id] = mediaSettings.enableAudio;
     return id;
   }
 
@@ -148,6 +163,27 @@ class FakeCameraPlatform extends CameraPlatform {
       '${captureDirectory.path}${Platform.pathSeparator}raw_$captureCount.jpg',
     );
     await file.writeAsBytes(pictureBytes);
+    return XFile(file.path);
+  }
+
+  @override
+  Future<void> startVideoRecording(
+    int cameraId, {
+    Duration? maxVideoDuration,
+  }) async {
+    startRecordingCount++;
+    recordingCameraId = cameraId;
+  }
+
+  @override
+  Future<XFile> stopVideoRecording(int cameraId) async {
+    stopRecordingCount++;
+    recordingCameraId = null;
+    final file = File(
+      '${captureDirectory.path}${Platform.pathSeparator}'
+      'raw_clip_$stopRecordingCount.mp4',
+    );
+    await file.writeAsBytes(clipBytes);
     return XFile(file.path);
   }
 

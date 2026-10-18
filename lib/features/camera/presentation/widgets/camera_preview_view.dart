@@ -15,6 +15,7 @@ import '../../../../core/permissions/permission_service.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/error_view.dart';
+import '../../../../shared/widgets/glass.dart';
 import '../../../../shared/widgets/loading_view.dart';
 import '../../../../shared/widgets/permission_rationale_sheet.dart';
 import '../../../gallery/data/gallery_saver_service.dart';
@@ -22,9 +23,12 @@ import '../../../gallery/domain/gallery_entry.dart';
 import '../../../gallery/presentation/providers/gallery_history_provider.dart';
 import '../../../overlay/presentation/widgets/overlay_controls.dart';
 import '../../../overlay/presentation/widgets/reference_overlay_layer.dart';
+import '../../../settings/domain/capture_ratio.dart';
+import '../../../settings/presentation/providers/settings_controller.dart';
 import '../../domain/camera_errors.dart';
 import '../../domain/camera_session.dart';
-import '../../domain/preview_geometry.dart';
+import '../../domain/capture_crop.dart';
+import '../../domain/frame_geometry.dart';
 import '../providers/camera_providers.dart';
 import 'alignment_grid.dart';
 import 'camera_controls.dart';
@@ -145,6 +149,19 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
       return const ColoredBox(color: Colors.black);
     }
 
+    // Changing either of these re-lays-out the preview and nothing else: the
+    // controller, the stream and the session are untouched.
+    final ratio = ref.watch(
+      settingsControllerProvider.select(
+        (settings) => settings.value?.captureRatio ?? CaptureRatio.classic43,
+      ),
+    );
+    final spilled = ref.watch(
+      settingsControllerProvider.select(
+        (settings) => settings.value?.showSensorSpill ?? true,
+      ),
+    );
+
     return ColoredBox(
       color: Colors.black,
       child: LayoutBuilder(
@@ -153,14 +170,36 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
           // without this widget rebuilding, and its controller then throws.
           if (!_notifier.isLive(controller)) return const SizedBox.shrink();
           final viewport = constraints.biggest;
+          final displayed = FrameGeometry.coverRect(
+            viewport: viewport,
+            sensor: _displayAspectRatio(controller.value),
+          );
+          // The frame may use what is left after the safe areas, so a notch or
+          // the home indicator never eats into the shot.
+          final available = FrameGeometry.availableArea(
+            viewport: viewport,
+            safeInsets: MediaQuery.paddingOf(context),
+          );
+          final frame = FrameGeometry.frameRect(
+            available: available,
+            aspect: ratio.value,
+          );
+          final outputRatio = ratio.resolve(available);
+
+          void focusAt(Offset point) =>
+              _focus(point, frame: frame, displayed: displayed);
+
           // One backdrop read of the preview shared by every glass control.
           return BackdropGroup(
             child: Stack(
               fit: StackFit.expand,
               children: <Widget>[
+                // The stream, drawn once and scaled to cover the viewport
+                // exactly as before: the frame below is a window onto it, not a
+                // second preview, so the capture pipeline is unaffected.
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTapUp: (details) => _focus(details.localPosition, viewport),
+                  onTapUp: (details) => focusAt(details.localPosition),
                   onScaleStart: (_) => _zoomAtScaleStart = widget.session.zoom,
                   onScaleUpdate: (details) {
                     if (details.pointerCount < 2) return;
@@ -179,16 +218,46 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
                     ),
                   ),
                 ),
-                // Above the preview, below the controls: a visual guide only, never
-                // part of the captured photo.
-                ReferenceOverlayLayer(
-                  onTap: (position) => _focus(position, viewport),
+                // Everything outside the frame: dimmed while the sensor spill is
+                // on, solid black when it is off.
+                IgnorePointer(
+                  child: CustomPaint(
+                    painter: _FrameMaskPainter(frame: frame, spilled: spilled),
+                  ),
                 ),
-                // The grid sits above the reference image so features can be
-                // lined up against the thirds.
-                const AlignmentGridLayer(),
-                if (_focusPoint case final point?)
-                  _FocusReticle(key: ValueKey<int>(_focusTick), center: point),
+                // The shot itself. The reference overlay, the grid and the
+                // focus reticle are scoped to the frame, so they stay aligned
+                // with the visible framing when the ratio changes.
+                Positioned.fromRect(
+                  rect: frame,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      ReferenceOverlayLayer(
+                        onTap: (position) =>
+                            focusAt(position + frame.topLeft),
+                      ),
+                      const AlignmentGridLayer(),
+                      if (_focusPoint case final point?)
+                        _FocusReticle(
+                          key: ValueKey<int>(_focusTick),
+                          center: point,
+                        ),
+                    ],
+                  ),
+                ),
+                Positioned.fromRect(
+                  rect: frame,
+                  child: IgnorePointer(
+                    child: _FrameCaption(
+                      ratio: ratio,
+                      displayed: displayed,
+                      frame: frame,
+                      outputRatio: outputRatio,
+                      stream: _streamSize(controller.value),
+                    ),
+                  ),
+                ),
                 IgnorePointer(
                   child: AnimatedOpacity(
                     opacity: _blink ? 1 : 0,
@@ -211,8 +280,15 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
                   right: 0,
                   child: CameraBottomBar(
                     session: session,
-                    onCapture: _capture,
+                    onCapture: () => _capture(
+                      frame: frame,
+                      displayed: displayed,
+                      outputRatio: outputRatio,
+                    ),
+                    onStartRecording: _startRecording,
+                    onStopRecording: _stopRecording,
                     onSwitchCamera: _notifier.switchCamera,
+                    onToggleMode: _toggleMode,
                     onZoomChanged: _notifier.setZoom,
                     leading: const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -233,22 +309,29 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
     );
   }
 
-  Future<void> _focus(Offset position, Size viewport) async {
+  /// Meters on a tap, but only where the shot is: a tap on the dimmed spill
+  /// outside the frame is not part of the photo, so it is ignored.
+  Future<void> _focus(
+    Offset position, {
+    required Rect frame,
+    required Rect displayed,
+  }) async {
     final session = widget.session;
     if (!session.capabilities.supportsTapToFocus) return;
+    if (!frame.contains(position)) return;
 
     final value = session.controller.value;
     if (!value.isInitialized || value.previewSize == null) return;
 
-    final point = coverPointToPreview(
+    final point = FrameGeometry.focusPoint(
       point: position,
-      viewport: viewport,
-      preview: Size(_displayAspectRatio(value), 1),
+      displayedImage: displayed,
     );
     if (point == null) return;
 
     setState(() {
-      _focusPoint = position;
+      // Frame-local, because the reticle is drawn inside the frame.
+      _focusPoint = position - frame.topLeft;
       _focusTick++;
     });
     _reticleTimer?.cancel();
@@ -259,7 +342,11 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
     await _notifier.focusAt(point);
   }
 
-  Future<void> _capture() async {
+  Future<void> _capture({
+    required Rect frame,
+    required Rect displayed,
+    required double outputRatio,
+  }) async {
     unawaited(Haptics.lightImpact());
     setState(() => _blink = true);
     Future<void>.delayed(_blinkDuration * 2, () {
@@ -267,7 +354,13 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
     });
 
     try {
-      final file = await _notifier.capture();
+      final file = await _notifier.capture(
+        crop: _cropFor(
+          frame: frame,
+          displayed: displayed,
+          outputRatio: outputRatio,
+        ),
+      );
       if (file == null || !mounted) return;
       await _saveToGallery(file.path);
     } on AppException catch (failure) {
@@ -275,12 +368,93 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
     }
   }
 
-  /// Writes the capture to the system photo library and files it in the local
-  /// gallery, which keeps the app's own copy of the file.
+  Future<void> _toggleMode() async {
+    await _notifier.setCaptureMode(widget.session.captureMode.other);
+  }
+
+  Future<void> _startRecording() async {
+    // A clip is filmed with sound, so the microphone is asked for first.
+    if (!await _ensureMicrophone() || !mounted) return;
+
+    unawaited(Haptics.mediumImpact());
+    try {
+      await _notifier.startRecording();
+    } on AppException catch (failure) {
+      if (mounted) context.showAppSnackBar(failure.message);
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    unawaited(Haptics.lightImpact());
+    try {
+      final clip = await _notifier.stopRecording();
+      if (clip == null || !mounted) return;
+      await _saveToGallery(clip.path, video: true);
+    } on AppException catch (failure) {
+      if (mounted) context.showAppSnackBar(failure.message);
+    }
+  }
+
+  /// Asks for the microphone, with a rationale, before the first clip.
+  Future<bool> _ensureMicrophone() async {
+    final permissions = ref.read(permissionServiceProvider);
+    if ((await permissions.status(AppPermission.microphone)).isGranted) {
+      return true;
+    }
+    if (!mounted) return false;
+
+    final accepted = await PermissionRationaleSheet.show(
+      context,
+      permission: AppPermission.microphone,
+    );
+    if (!accepted || !mounted) return false;
+
+    final status = await permissions.request(AppPermission.microphone);
+    if (status.isGranted) return true;
+    if (mounted) {
+      _notify(
+        '${AppConstants.appName} needs the microphone to film with sound.',
+        action: status.isBlocked ? _settingsAction : null,
+      );
+    }
+    return false;
+  }
+
+  /// The frame the preview showed, expressed against the stream image so the
+  /// session can crop the still to match it.
   ///
-  /// The file is the camera's own image — the preview, the controls and the
-  /// reference overlay are never part of it — so it is stored untouched.
-  Future<void> _saveToGallery(String path) async {
+  /// Returns null when the frame already matches the stream, which is the
+  /// cheap way to keep the camera's own bytes: no crop is requested, so not
+  /// even a decode happens.
+  static CaptureCrop? _cropFor({
+    required Rect frame,
+    required Rect displayed,
+    required double outputRatio,
+  }) {
+    if (frame.isEmpty || displayed.isEmpty) return null;
+    if (FrameGeometry.sameRatio(
+      displayed.width / displayed.height,
+      outputRatio,
+    )) {
+      return null;
+    }
+    return CaptureCrop(
+      frame: Rect.fromLTWH(
+        (frame.left - displayed.left) / displayed.width,
+        (frame.top - displayed.top) / displayed.height,
+        frame.width / displayed.width,
+        frame.height / displayed.height,
+      ),
+      aspectRatio: outputRatio,
+    );
+  }
+
+  /// Writes a capture to the system library and files it in the local gallery,
+  /// which keeps the app's own copy of the file.
+  ///
+  /// The file is the camera's own image or clip — the preview, the controls and
+  /// the reference overlay are never part of it — so it is stored untouched.
+  Future<void> _saveToGallery(String path, {bool video = false}) async {
     final gallery = ref.read(gallerySaverServiceProvider);
     var keep = false;
     try {
@@ -302,8 +476,12 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
         }
       }
 
-      await gallery.saveImage(path);
-      keep = await _rememberCapture(path);
+      if (video) {
+        await gallery.saveVideo(path);
+      } else {
+        await gallery.saveImage(path);
+      }
+      keep = await _rememberCapture(path, video: video);
       // No confirmation message: the flash and the haptic already say the
       // photo was taken, and the noise over the preview is not wanted.
       if (mounted) unawaited(Haptics.mediumImpact());
@@ -322,11 +500,14 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
   /// Files the capture in the local gallery history, which keeps the working
   /// copy. Returns false when it could not be recorded, so the caller cleans
   /// the copy up rather than leaking a file nothing points at.
-  Future<bool> _rememberCapture(String path) async {
+  Future<bool> _rememberCapture(String path, {bool video = false}) async {
     try {
       await ref
           .read(galleryHistoryProvider.notifier)
-          .record(path: path, kind: GalleryEntryKind.photo);
+          .record(
+            path: path,
+            kind: video ? GalleryEntryKind.video : GalleryEntryKind.photo,
+          );
       return true;
     } catch (error, stackTrace) {
       // The photo is already in the system library; a history failure is not
@@ -367,15 +548,127 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
   /// Mirrors how [CameraPreview] orients the stream, so tap coordinates match
   /// what is on screen.
   static double _displayAspectRatio(CameraValue value) {
+    final size = _streamSize(value);
+    if (size == null) return 1;
+    return size.width / size.height;
+  }
+
+  /// The stream's size in the orientation it is displayed in, which is what the
+  /// frame and the caption reason about. Null until the stream reports one.
+  static Size? _streamSize(CameraValue value) {
+    final preview = value.previewSize;
+    if (preview == null || preview.isEmpty) return null;
+    return _isLandscape(value)
+        ? Size(preview.width, preview.height)
+        : Size(preview.height, preview.width);
+  }
+
+  static bool _isLandscape(CameraValue value) {
     final orientation = value.isRecordingVideo
         ? value.recordingOrientation
         : value.previewPauseOrientation ??
               value.lockedCaptureOrientation ??
               value.deviceOrientation;
-    final landscape =
-        orientation == DeviceOrientation.landscapeLeft ||
+    return orientation == DeviceOrientation.landscapeLeft ||
         orientation == DeviceOrientation.landscapeRight;
-    return landscape ? value.aspectRatio : 1 / value.aspectRatio;
+  }
+}
+
+/// Dims everything outside the capture frame, so the part of the sensor the
+/// shot leaves out stays visible (and visibly excluded).
+class _FrameMaskPainter extends CustomPainter {
+  const _FrameMaskPainter({required this.frame, required this.spilled});
+
+  final Rect frame;
+
+  /// False paints the outside solid black, hiding the spill entirely.
+  final bool spilled;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final outside = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Offset.zero & size),
+      Path()..addRect(frame),
+    );
+    canvas.drawPath(
+      outside,
+      Paint()..color = spilled ? const Color(0x99000000) : Colors.black,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FrameMaskPainter oldDelegate) =>
+      oldDelegate.frame != frame || oldDelegate.spilled != spilled;
+}
+
+/// Small chip inside the frame that separates what the camera produces from
+/// what the shot will keep: the stream's size, then the cropped output's.
+class _FrameCaption extends StatelessWidget {
+  const _FrameCaption({
+    required this.ratio,
+    required this.displayed,
+    required this.frame,
+    required this.outputRatio,
+    required this.stream,
+  });
+
+  final CaptureRatio ratio;
+  final Rect displayed;
+  final Rect frame;
+  final double outputRatio;
+  final Size? stream;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = stream;
+    if (source == null || source.isEmpty) return const SizedBox.shrink();
+
+    final cropped = FrameGeometry.cropRectForFrame(
+      displayedImage: displayed,
+      frame: frame,
+      source: source,
+      targetRatio: outputRatio,
+    );
+    final output = cropped?.size ?? source;
+    final text =
+        '${source.width.round()}×${source.height.round()} → '
+        '${output.width.round()}×${output.height.round()}';
+
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+        child: Semantics(
+          label:
+              '${ratio.spokenLabel} framing. Camera stream $text '
+              'after cropping. The reference image is not part of the photo.',
+          excludeSemantics: true,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm,
+                vertical: 3,
+              ),
+              child: Text(
+                text,
+                key: const ValueKey<String>('camera-frame-caption'),
+                style: context.textStyles.labelSmall?.copyWith(
+                  color: context.cameraTheme.onScrim.withValues(alpha: 0.85),
+                  fontSize: 10,
+                  fontFeatures: tabularFigures,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

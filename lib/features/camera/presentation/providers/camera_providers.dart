@@ -14,11 +14,14 @@ import '../../../../core/permissions/permission_service.dart';
 import '../../../settings/domain/preferred_camera.dart';
 import '../../../settings/presentation/providers/settings_controller.dart';
 import '../../data/camera_service.dart';
+import '../../data/capture_cropper.dart';
 import '../../domain/camera_capabilities.dart';
 import '../../domain/camera_errors.dart';
 import '../../domain/camera_flash_mode.dart';
 import '../../domain/camera_selection.dart';
 import '../../domain/camera_session.dart';
+import '../../domain/capture_crop.dart';
+import '../../domain/capture_mode.dart';
 
 /// Riverpod 3 retries failing providers automatically. Camera failures need
 /// the user (a permission, another app holding the camera), so they surface
@@ -90,6 +93,7 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
   List<CameraDescription> _cameras = const <CameraDescription>[];
   int _index = 0;
   CameraFlashMode _preferredFlash = CameraFlashMode.off;
+  CaptureMode _captureMode = CaptureMode.photo;
 
   /// Bumped whenever an in-flight open must be abandoned (pause, dispose, a
   /// newer open). An open only publishes if its generation is still current.
@@ -102,10 +106,14 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
   /// stays released even if the app comes back to the foreground.
   bool _held = false;
   bool _capturing = false;
+  bool _recording = false;
   bool _switching = false;
   bool _changingFlash = false;
   Future<void> _releasing = Future<void>.value();
   Completer<void>? _resumed;
+
+  /// Ticks the recording clock once a second while a clip is being filmed.
+  Timer? _recordingTicker;
 
   double? _pendingZoom;
   bool _zoomInFlight = false;
@@ -124,6 +132,8 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     // flags are reset here rather than relying on field initializers.
     _active = true;
     _paused = false;
+    _recording = false;
+    _stopRecordingTicker();
     _service = ref.read(cameraServiceProvider);
     _errors = ref.read(appErrorHandlerProvider);
     _files = ref.read(fileServiceProvider);
@@ -158,7 +168,8 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
   }
 
   Future<void> switchCamera() async {
-    if (_cameras.length < 2 || _capturing || _switching || _paused) return;
+    if (_cameras.length < 2 || _capturing || _recording || _switching) return;
+    if (_paused) return;
     if (_session == null) return;
 
     final previous = _index;
@@ -179,18 +190,22 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
 
   /// Takes a still and stores it in the app's captures directory.
   ///
+  /// [crop] is the frame the preview showed. When it is null, or the still
+  /// already matches its ratio, the camera's bytes are saved untouched; only a
+  /// real crop costs a re-encode.
+  ///
   /// Returns null without doing anything when the camera is not ready or a
   /// capture is already running, so repeated shutter taps are harmless.
-  Future<XFile?> capture() async {
+  Future<XFile?> capture({CaptureCrop? crop}) async {
     final session = _session;
-    if (session == null || _capturing || _switching) return null;
+    if (session == null || _capturing || _recording || _switching) return null;
     if (session.controller.value.isTakingPicture) return null;
 
     _capturing = true;
     _emit(session.copyWith(isCapturing: true));
     try {
       final shot = await _service.capture(session.controller);
-      final stored = await _storeCapture(shot);
+      final stored = await _storeCapture(shot, crop);
       _updateIfCurrent(
         session.controller,
         (current) => current.copyWith(isCapturing: false, lastCapture: stored),
@@ -206,6 +221,108 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     } finally {
       _capturing = false;
     }
+  }
+
+  /// Switches between taking stills and filming clips.
+  ///
+  /// Audio is only opened for video, so this reopens the camera — the one
+  /// change that legitimately restarts the session. Lens, zoom and flash are
+  /// carried over.
+  Future<void> setCaptureMode(CaptureMode mode) async {
+    if (mode == _captureMode || _recording || _capturing || _switching) return;
+    if (_paused || _session == null) {
+      _captureMode = mode;
+      return;
+    }
+
+    final zoom = _session?.zoom;
+    _captureMode = mode;
+    _switching = true;
+    state = const AsyncLoading<CameraSession>();
+    try {
+      final session = await _open(_index, zoom: zoom);
+      if (session != null) _emit(session);
+    } catch (error, stackTrace) {
+      _fail(error, stackTrace);
+    } finally {
+      _switching = false;
+    }
+  }
+
+  /// Starts filming. Returns false when the camera is not ready, is not in
+  /// video mode, or is already busy.
+  Future<bool> startRecording() async {
+    final session = _session;
+    if (session == null || _recording || _capturing || _switching) return false;
+    if (!session.captureMode.isVideo) return false;
+
+    _recording = true;
+    try {
+      await _service.startVideoRecording(session.controller);
+      _emit(
+        session.copyWith(isRecording: true, recordingDuration: Duration.zero),
+      );
+      _startRecordingTicker(session.controller);
+      return true;
+    } catch (error, stackTrace) {
+      _recording = false;
+      _errors.report(error, stackTrace, operation: 'start video recording');
+      throw _errors.map(error, stackTrace);
+    }
+  }
+
+  /// Stops filming and stores the clip. Returns null when nothing is running.
+  ///
+  /// The clip is moved, never re-encoded: the platform muxer already wrote a
+  /// correctly framed file with synchronised audio.
+  Future<XFile?> stopRecording() async {
+    final session = _session;
+    if (session == null || !_recording) return null;
+
+    _recording = false;
+    _stopRecordingTicker();
+    final controller = session.controller;
+    try {
+      final clip = await _service.stopVideoRecording(controller);
+      final stored = await _storeRecording(clip);
+      _updateIfCurrent(
+        controller,
+        (current) => current.copyWith(
+          isRecording: false,
+          recordingDuration: Duration.zero,
+          lastCapture: stored,
+        ),
+      );
+      return stored;
+    } catch (error, stackTrace) {
+      _updateIfCurrent(
+        controller,
+        (current) => current.copyWith(
+          isRecording: false,
+          recordingDuration: Duration.zero,
+        ),
+      );
+      _errors.report(error, stackTrace, operation: 'stop video recording');
+      throw _errors.map(error, stackTrace);
+    }
+  }
+
+  void _startRecordingTicker(CameraController controller) {
+    _stopRecordingTicker();
+    _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateIfCurrent(
+        controller,
+        (current) => current.copyWith(
+          recordingDuration:
+              current.recordingDuration + const Duration(seconds: 1),
+        ),
+      );
+    });
+  }
+
+  void _stopRecordingTicker() {
+    _recordingTicker?.cancel();
+    _recordingTicker = null;
   }
 
   Future<void> setFlashMode(CameraFlashMode mode) async {
@@ -376,7 +493,12 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
 
     final generation = ++_generation;
     final description = _cameras[index];
-    final controller = _service.createController(description);
+    // Audio is only opened for video, so a photo session never asks for the
+    // microphone.
+    final controller = _service.createController(
+      description,
+      enableAudio: _captureMode.isVideo,
+    );
 
     try {
       await _service.initialize(controller);
@@ -447,6 +569,7 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
       capabilities: capabilities,
       flashMode: flashMode,
       zoom: initialZoom,
+      captureMode: _captureMode,
     );
   }
 
@@ -520,26 +643,80 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     });
   }
 
-  Future<XFile> _storeCapture(XFile shot) async {
+  /// Moves a finished clip into the app's captures directory.
+  ///
+  /// The platform muxer already produced a correctly oriented file with
+  /// synchronised audio, so the clip is moved as-is. Cropping a clip to an
+  /// arbitrary ratio would need a transcoder, which this app does not ship —
+  /// clips are filmed at the camera's native ratio.
+  Future<XFile> _storeRecording(XFile clip) async {
+    final target = await _files.createCaptureFile(extension: 'mp4');
+    final source = File(clip.path);
+    try {
+      await source.rename(target.path);
+    } on FileSystemException {
+      // A different volume: copy instead, then drop the temporary file.
+      await source.copy(target.path);
+      try {
+        await source.delete();
+      } on FileSystemException catch (error, stackTrace) {
+        _errors.logger.warning(
+          'Temporary clip was not cleaned up.',
+          error,
+          stackTrace,
+        );
+      }
+    }
+    return XFile(target.path, mimeType: 'video/mp4');
+  }
+
+  /// Moves the shot into the app's captures directory, cropping it to the
+  /// frame the preview showed when that differs from what the camera produced.
+  ///
+  /// The crop is best-effort: if it cannot be decoded or encoded the original
+  /// bytes are stored instead, so a capture is never lost.
+  Future<XFile> _storeCapture(XFile shot, CaptureCrop? crop) async {
     final target = await _files.createCaptureFile();
     final source = File(shot.path);
-    final saved = await source.copy(target.path);
     try {
-      await source.delete();
-    } on FileSystemException catch (error, stackTrace) {
-      _errors.logger.warning(
-        'Temporary capture was not cleaned up.',
-        error,
-        stackTrace,
-      );
+      Uint8List? cropped;
+      if (crop != null) {
+        try {
+          cropped = await cropToFrame(await source.readAsBytes(), crop);
+        } catch (error, stackTrace) {
+          _errors.logger.warning(
+            'The capture could not be cropped; keeping it uncropped.',
+            error,
+            stackTrace,
+          );
+        }
+      }
+
+      if (cropped == null) {
+        await source.copy(target.path);
+      } else {
+        await target.writeAsBytes(cropped, flush: true);
+      }
+      return XFile(target.path, mimeType: 'image/jpeg');
+    } finally {
+      try {
+        await source.delete();
+      } on FileSystemException catch (error, stackTrace) {
+        _errors.logger.warning(
+          'Temporary capture was not cleaned up.',
+          error,
+          stackTrace,
+        );
+      }
     }
-    return XFile(saved.path, mimeType: 'image/jpeg');
   }
 
   Future<void> _pause() async {
     if (_paused || !_isActive) return;
     _paused = true;
     _generation++;
+    _recording = false;
+    _stopRecordingTicker();
 
     // Leave the session state before disposing, so no frame renders a
     // released controller. A viewport that is laid out once more anyway is
@@ -575,6 +752,8 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     _active = false;
     _generation++;
     _pendingZoom = null;
+    _recording = false;
+    _stopRecordingTicker();
     final waiter = _resumed;
     _resumed = null;
     waiter?.complete();
