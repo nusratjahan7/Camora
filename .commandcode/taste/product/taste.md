@@ -8,3 +8,5 @@
 - Wants the UI kept quiet: no success toast/snackbar confirming an action (e.g. after a photo capture) — inherent feedback like the shutter flash and haptic is enough, and messages are reserved for failures. Confidence: 0.75
 - Wants edge cases handled explicitly and gracefully: missing files, permission errors, and empty states. Confidence: 0.7
 - Wants visually similar variants clearly distinguished in the UI (e.g. badging an original photo apart from a composite export). Confidence: 0.6
+- Expects every visible control to be functional — no decorative or placeholder controls that do nothing. Confidence: 0.8
+- Wants layouts responsive across screen sizes and across portrait and landscape, respecting safe areas and avoiding overflow. Confidence: 0.7

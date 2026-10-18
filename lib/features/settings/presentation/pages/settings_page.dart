@@ -8,6 +8,7 @@ import '../../../../shared/widgets/app_scaffold.dart';
 import '../../../../shared/widgets/app_slider.dart';
 import '../../../../shared/widgets/error_view.dart';
 import '../../../../shared/widgets/loading_view.dart';
+import '../../domain/preferred_camera.dart';
 import '../providers/settings_controller.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -51,6 +52,42 @@ class SettingsPage extends ConsumerWidget {
                   .setThemeMode(selection.first),
             ),
             const SizedBox(height: AppSpacing.xl),
+            const _SectionTitle('Camera'),
+            SegmentedButton<PreferredCamera>(
+              showSelectedIcon: false,
+              segments: <ButtonSegment<PreferredCamera>>[
+                for (final camera in PreferredCamera.values)
+                  ButtonSegment<PreferredCamera>(
+                    value: camera,
+                    label: Text(camera.label),
+                  ),
+              ],
+              selected: <PreferredCamera>{settings.preferredCamera},
+              onSelectionChanged: (selection) => ref
+                  .read(settingsControllerProvider.notifier)
+                  .setPreferredCamera(selection.first),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'The lens the camera opens with. You can still switch lenses '
+              'while shooting.',
+              style: context.textStyles.bodySmall?.copyWith(
+                color: context.colors.onSurfaceVariant,
+              ),
+            ),
+            SwitchListTile(
+              value: settings.showAlignmentGrid,
+              onChanged: (value) => ref
+                  .read(settingsControllerProvider.notifier)
+                  .setShowAlignmentGrid(value),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Alignment grid'),
+              subtitle: const Text(
+                'Draw a rule-of-thirds guide over the preview while '
+                'composing. It is never part of the photo.',
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xl),
             const _SectionTitle('Overlay defaults'),
             AppSlider(
               label: 'Reference image opacity',
@@ -63,15 +100,17 @@ class SettingsPage extends ConsumerWidget {
                   .read(settingsControllerProvider.notifier)
                   .setDefaultOverlayOpacity(value),
             ),
+            const SizedBox(height: AppSpacing.xl),
+            const _SectionTitle('Feedback'),
             SwitchListTile(
-              value: settings.showAlignmentGrid,
+              value: settings.hapticsEnabled,
               onChanged: (value) => ref
                   .read(settingsControllerProvider.notifier)
-                  .setShowAlignmentGrid(value),
+                  .setHapticsEnabled(value),
               contentPadding: EdgeInsets.zero,
-              title: const Text('Show alignment grid'),
+              title: const Text('Haptic feedback'),
               subtitle: const Text(
-                'Display a rule-of-thirds guide while composing a shot.',
+                'A short vibration when you tap a control or take a photo.',
               ),
             ),
           ],

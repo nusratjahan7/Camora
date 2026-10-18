@@ -11,6 +11,8 @@ import '../../../../core/errors/app_exception.dart';
 import '../../../../core/files/file_service.dart';
 import '../../../../core/permissions/app_permission.dart';
 import '../../../../core/permissions/permission_service.dart';
+import '../../../settings/domain/preferred_camera.dart';
+import '../../../settings/presentation/providers/settings_controller.dart';
 import '../../data/camera_service.dart';
 import '../../domain/camera_capabilities.dart';
 import '../../domain/camera_errors.dart';
@@ -131,7 +133,11 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
     if (cameras.isEmpty) {
       throw const CameraFailure('No camera is available on this device.');
     }
-    _index = _indexToKeep(cameras);
+    // The first open honours the preferred lens; later opens (a retry, a
+    // resume) keep whatever lens the user is on.
+    _index = _cameras.isEmpty
+        ? indexOfPreferredCamera(cameras, _preferredCamera)
+        : _indexToKeep(cameras);
     _cameras = cameras;
 
     _building = true;
@@ -603,6 +609,12 @@ class CameraSessionController extends AsyncNotifier<CameraSession> {
   }
 
   bool _isCurrent(int generation) => generation == _generation && _isActive;
+
+  /// The lens from Settings the camera opens with. Read (not watched) so that
+  /// changing another setting while the camera is open never reopens it.
+  PreferredCamera get _preferredCamera =>
+      ref.read(settingsControllerProvider).value?.preferredCamera ??
+      PreferredCamera.rear;
 
   int _indexToKeep(List<CameraDescription> cameras) {
     if (_cameras.isNotEmpty && _index < _cameras.length) {

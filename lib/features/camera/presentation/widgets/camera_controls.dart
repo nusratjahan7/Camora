@@ -1,16 +1,17 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../app/router/app_routes.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/haptics/haptics.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/glass.dart';
 import '../../domain/camera_flash_mode.dart';
 import '../../domain/camera_session.dart';
+import 'alignment_grid.dart';
 
 class CameraCloseButton extends StatelessWidget {
   const CameraCloseButton({super.key});
@@ -27,6 +28,24 @@ class CameraCloseButton extends StatelessWidget {
           context.go(AppRoutes.home);
         }
       },
+    );
+  }
+}
+
+/// Opens the app's own gallery: the photos this app captured and the reference
+/// images it has used.
+class GalleryShortcutButton extends StatelessWidget {
+  const GalleryShortcutButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassIconButton(
+      key: const ValueKey<String>('camera-gallery'),
+      icon: Icons.photo_library_outlined,
+      diameter: CameraBottomBar.sideSlot,
+      iconSize: 24,
+      tooltip: 'Open gallery',
+      onPressed: () => context.go(AppRoutes.gallery),
     );
   }
 }
@@ -90,7 +109,9 @@ class CameraTopBar extends StatelessWidget {
             children: <Widget>[
               const CameraCloseButton(),
               const Spacer(),
-              if (session.capabilities.supportsFlash)
+              const GridToggleButton(),
+              if (session.capabilities.supportsFlash) ...<Widget>[
+                const SizedBox(width: AppSpacing.sm),
                 GlassIconButton(
                   key: const ValueKey<String>('camera-flash'),
                   icon: _flashIcon(flash),
@@ -98,6 +119,7 @@ class CameraTopBar extends StatelessWidget {
                   active: flash != CameraFlashMode.off,
                   onPressed: canFlash ? onCycleFlash : null,
                 ),
+              ],
             ],
           ),
         ),
@@ -136,11 +158,14 @@ class CameraBottomBar extends StatelessWidget {
   final VoidCallback onSwitchCamera;
   final ValueChanged<double> onZoomChanged;
 
-  /// Shown left of the shutter, e.g. the reference-image picker.
+  /// Shown left of the shutter, e.g. the gallery and reference-image buttons.
   final Widget? leading;
 
   /// Extra controls above the zoom selector, e.g. overlay adjustments.
   final Widget? accessory;
+
+  /// Diameter of the buttons flanking the shutter.
+  static const double sideSlot = 52;
 
   @override
   Widget build(BuildContext context) {
@@ -174,11 +199,14 @@ class CameraBottomBar extends StatelessWidget {
                 child: Row(
                   children: <Widget>[
                     Expanded(
-                      child: Align(
+                      // Scales down rather than overflowing on very narrow
+                      // screens; the shutter stays centred either way.
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
                         child:
                             leading ??
-                            const SizedBox.square(dimension: _sideSlot),
+                            const SizedBox.square(dimension: sideSlot),
                       ),
                     ),
                     ShutterButton(
@@ -186,12 +214,13 @@ class CameraBottomBar extends StatelessWidget {
                       onPressed: busy ? null : onCapture,
                     ),
                     Expanded(
-                      child: Align(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
                         alignment: Alignment.centerRight,
                         child: GlassIconButton(
                           key: const ValueKey<String>('camera-switch'),
                           icon: Icons.cameraswitch_rounded,
-                          diameter: _sideSlot,
+                          diameter: sideSlot,
                           iconSize: 24,
                           tooltip: session.isFrontFacing
                               ? 'Switch to rear camera'
@@ -211,8 +240,6 @@ class CameraBottomBar extends StatelessWidget {
       ),
     );
   }
-
-  static const double _sideSlot = 52;
 }
 
 /// Lens-style zoom stops (0.5×, 1×, 2×…) in a glass pill. Tap a stop to jump
@@ -288,7 +315,7 @@ class _ZoomSelectorState extends State<_ZoomSelector> {
                   selected: stop == active,
                   accent: theme.accent,
                   onTap: () {
-                    HapticFeedback.selectionClick();
+                    Haptics.selectionClick();
                     widget.onChanged(stop);
                   },
                 ),

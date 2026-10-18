@@ -7,3 +7,4 @@
 - Prefers implementing in scoped modules/stages rather than delivering everything at once. Confidence: 0.7
 - Wants unit tests for pure/non-trivial logic (e.g. coordinate-mapping and image-composition math), not just integration coverage. Confidence: 0.75
 - Wants results verified on real Android and iOS devices where hardware is available, not only through host-side test runs. Confidence: 0.7
+- When polishing or refactoring, wants existing working features preserved rather than replaced or rewritten. Confidence: 0.75

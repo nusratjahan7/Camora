@@ -1,9 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/haptics/haptics.dart';
 import '../extensions/build_context_extensions.dart';
 
 /// Frosted surface for controls that float over the camera preview: the
@@ -110,7 +110,7 @@ class GlassIconButton extends StatelessWidget {
           onTap: onPressed == null
               ? null
               : () {
-                  HapticFeedback.selectionClick();
+                  Haptics.selectionClick();
                   onPressed!();
                 },
           child: SizedBox.square(
@@ -163,7 +163,7 @@ class GlassSegmentedControl<T> extends StatelessWidget {
           key: item.key,
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            HapticFeedback.selectionClick();
+            Haptics.selectionClick();
             onSelected(item.value);
           },
           child: AnimatedContainer(

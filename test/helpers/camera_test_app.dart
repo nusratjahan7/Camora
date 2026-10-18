@@ -19,6 +19,14 @@ Future<void> pumpCameraApp(
         path: AppRoutes.camera,
         builder: (context, state) => const CameraPage(),
       ),
+      // The camera bar links to the gallery; a stub keeps navigation testable
+      // without standing up the whole gallery feature.
+      GoRoute(
+        path: AppRoutes.gallery,
+        builder: (context, state) => const Scaffold(
+          body: SizedBox(key: ValueKey<String>('test-gallery-route')),
+        ),
+      ),
     ],
   );
   addTearDown(router.dispose);

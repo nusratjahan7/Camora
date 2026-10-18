@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/errors/app_error_handler.dart';
 import '../../../../core/errors/app_exception.dart';
+import '../../../../core/haptics/haptics.dart';
 import '../../../../core/permissions/app_permission.dart';
 import '../../../../core/permissions/permission_service.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -25,6 +26,7 @@ import '../../domain/camera_errors.dart';
 import '../../domain/camera_session.dart';
 import '../../domain/preview_geometry.dart';
 import '../providers/camera_providers.dart';
+import 'alignment_grid.dart';
 import 'camera_controls.dart';
 
 class CameraPreviewView extends ConsumerWidget {
@@ -182,6 +184,9 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
                 ReferenceOverlayLayer(
                   onTap: (position) => _focus(position, viewport),
                 ),
+                // The grid sits above the reference image so features can be
+                // lined up against the thirds.
+                const AlignmentGridLayer(),
                 if (_focusPoint case final point?)
                   _FocusReticle(key: ValueKey<int>(_focusTick), center: point),
                 IgnorePointer(
@@ -209,7 +214,14 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
                     onCapture: _capture,
                     onSwitchCamera: _notifier.switchCamera,
                     onZoomChanged: _notifier.setZoom,
-                    leading: const OverlayPickerButton(),
+                    leading: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        GalleryShortcutButton(),
+                        SizedBox(width: AppSpacing.sm),
+                        OverlayPickerButton(),
+                      ],
+                    ),
                     accessory: const OverlayControlPanel(),
                   ),
                 ),
@@ -248,7 +260,7 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
   }
 
   Future<void> _capture() async {
-    unawaited(HapticFeedback.lightImpact());
+    unawaited(Haptics.lightImpact());
     setState(() => _blink = true);
     Future<void>.delayed(_blinkDuration * 2, () {
       if (mounted) setState(() => _blink = false);
@@ -294,7 +306,7 @@ class _CameraViewportState extends ConsumerState<_CameraViewport> {
       keep = await _rememberCapture(path);
       // No confirmation message: the flash and the haptic already say the
       // photo was taken, and the noise over the preview is not wanted.
-      if (mounted) unawaited(HapticFeedback.mediumImpact());
+      if (mounted) unawaited(Haptics.mediumImpact());
     } on AppException catch (failure) {
       if (mounted) {
         _notify(

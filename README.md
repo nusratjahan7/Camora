@@ -262,11 +262,51 @@ rather than failing.
 
 ---
 
+## Camera screen
+
+The shooting screen is full-screen and always dark, whatever the app theme.
+The preview fills the frame and the controls float on a soft scrim, so they
+stay legible over any scene without boxing the feed in.
+
+| Control | Behaviour |
+|---|---|
+| Close (top left) | Leaves the shooting screen |
+| Grid (top right) | Shows or hides the rule-of-thirds guide; the choice is remembered |
+| Flash (top right) | Cycles off → auto → on → torch on the rear camera; hidden on the front |
+| Gallery (bottom left) | Opens the app's own history (see **Gallery and history**) |
+| Reference (bottom left) | Chooses the reference image to float over the preview |
+| Shutter (bottom centre) | Captures the camera's own image |
+| Switch (bottom right) | Front / rear; hidden when the device has only one camera |
+| Zoom pills | Lens stops (0.5× / 1× / 2×…) and drag-to-zoom; hidden when the camera cannot zoom |
+
+Every control has a 48 dp minimum touch target and a semantics label, and the
+bars respect the safe area in both portrait and landscape. On short (landscape)
+screens the overlay tray starts folded to its header.
+
+## Settings
+
+Preferences are kept on the device and restored the next time the app launches:
+
+| Setting | Behaviour |
+|---|---|
+| Theme | System, dark or light; the camera screen stays dark either way |
+| Preferred camera | The lens the shooting screen opens with (rear or front); you can still switch while shooting |
+| Alignment grid | Rule-of-thirds guide over the preview; also toggled from the camera bar |
+| Reference image opacity | The opacity a new reference image starts at |
+| Haptic feedback | Short vibrations when you tap a control or take a photo |
+
+The grid and the reference overlay are guides only — neither is ever part of a
+captured photo.
+
+---
+
 ## Reference overlay
 
-Tap the gallery button left of the shutter to choose one reference image. It is drawn
-between the live preview and the camera controls, so it can never cover the shutter,
-flash, zoom or switch buttons.
+Tap the reference button (the tile left of the shutter) to choose one reference
+image. It is drawn between the live preview and the camera controls, so it can
+never cover the shutter, flash, zoom or switch buttons. Its settings sit in a
+glass tray above the zoom and shutter, so adjusting the overlay never hides the
+controls you need; flick the tray down to shrink it to a chip.
 
 | Control | Behaviour |
 |---|---|

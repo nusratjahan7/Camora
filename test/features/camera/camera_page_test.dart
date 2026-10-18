@@ -5,6 +5,8 @@ import 'package:camera_overlay/core/files/file_service.dart';
 import 'package:camera_overlay/core/permissions/app_permission.dart';
 import 'package:camera_overlay/core/permissions/permission_service.dart';
 import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
+import 'package:camera_overlay/features/camera/presentation/pages/camera_page.dart';
+import 'package:camera_overlay/features/camera/presentation/widgets/alignment_grid.dart';
 import 'package:camera_overlay/features/gallery/data/gallery_saver_service.dart';
 import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
@@ -85,6 +87,11 @@ void main() {
   }
 
   final shutter = find.byKey(const ValueKey<String>('camera-shutter'));
+  // The rule-of-thirds guide paints exactly one CustomPaint when visible.
+  final gridPainter = find.descendant(
+    of: find.byType(AlignmentGridLayer),
+    matching: find.byType(CustomPaint),
+  );
 
   group('permission', () {
     testWidgets('asks with a rationale first, then shows the preview', (
@@ -213,6 +220,51 @@ void main() {
 
       expect(find.byTooltip('Switch to rear camera'), findsOneWidget);
       expect(find.byKey(const ValueKey<String>('camera-flash')), findsNothing);
+    });
+
+    testWidgets('the grid toggle drives and stores the alignment grid', (
+      tester,
+    ) async {
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      // The default is on, and the guide is painted over the preview.
+      expect(find.byIcon(Icons.grid_on_rounded), findsOneWidget);
+      expect(gridPainter, findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey<String>('camera-grid')));
+      await settle(tester);
+
+      expect(find.byIcon(Icons.grid_off_rounded), findsOneWidget);
+      expect(gridPainter, findsNothing);
+      expect(await store.getBool(StorageKeys.showAlignmentGrid), isFalse);
+
+      await tester.tap(find.byKey(const ValueKey<String>('camera-grid')));
+      await settle(tester);
+
+      expect(find.byIcon(Icons.grid_on_rounded), findsOneWidget);
+      expect(gridPainter, findsOneWidget);
+      expect(await store.getBool(StorageKeys.showAlignmentGrid), isTrue);
+    });
+
+    testWidgets('the gallery shortcut opens the app gallery', (tester) async {
+      await pumpPage(
+        tester,
+        FakePermissionService(AppPermissionStatus.granted),
+      );
+      await settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey<String>('camera-gallery')));
+      await settle(tester);
+
+      expect(
+        find.byKey(const ValueKey<String>('test-gallery-route')),
+        findsOneWidget,
+      );
+      expect(find.byType(CameraPage), findsNothing);
     });
 
     testWidgets('shows an error with retry when the camera fails to start', (

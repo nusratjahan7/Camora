@@ -2,17 +2,22 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:camera_overlay/core/constants/storage_keys.dart';
 import 'package:camera_overlay/core/errors/app_exception.dart';
 import 'package:camera_overlay/core/files/file_service.dart';
+import 'package:camera_overlay/core/storage/shared_preferences_store.dart';
 import 'package:camera_overlay/features/camera/domain/camera_flash_mode.dart';
 import 'package:camera_overlay/features/camera/domain/camera_session.dart';
 import 'package:camera_overlay/features/camera/presentation/providers/camera_providers.dart';
+import 'package:camera_overlay/features/settings/domain/preferred_camera.dart';
+import 'package:camera_overlay/features/settings/presentation/providers/settings_controller.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../helpers/fake_key_value_store.dart';
 import 'fakes/fake_camera_platform.dart';
 
 void main() {
@@ -20,6 +25,7 @@ void main() {
 
   late Directory temp;
   late FakeCameraPlatform platform;
+  late FakeKeyValueStore store;
   late ProviderContainer container;
   ProviderSubscription<AsyncValue<CameraSession>>? keepAlive;
 
@@ -27,8 +33,13 @@ void main() {
     temp = await Directory.systemTemp.createTemp('camera_session_test');
     platform = FakeCameraPlatform(captureDirectory: temp);
     CameraPlatform.instance = platform;
+    store = FakeKeyValueStore();
     container = ProviderContainer(
-      overrides: [fileServiceProvider.overrideWithValue(TempFileService(temp))],
+      overrides: [
+        fileServiceProvider.overrideWithValue(TempFileService(temp)),
+        // The session reads the preferred lens from Settings.
+        keyValueStoreProvider.overrideWithValue(store),
+      ],
     );
     keepAlive = null;
   });
@@ -71,6 +82,35 @@ void main() {
       expect(current.canSwitchCamera, isTrue);
       expect(current.controller.value.isInitialized, isTrue);
     });
+
+    test('opens the lens chosen in Settings', () async {
+      await store.setString(
+        StorageKeys.preferredCamera,
+        PreferredCamera.front.name,
+      );
+      await container.read(settingsControllerProvider.future);
+
+      final current = await session();
+
+      expect(current.description, frontCamera);
+      expect(current.isFrontFacing, isTrue);
+    });
+
+    test(
+      'falls back to the rear lens when the preferred one is absent',
+      () async {
+        await store.setString(
+          StorageKeys.preferredCamera,
+          PreferredCamera.front.name,
+        );
+        await container.read(settingsControllerProvider.future);
+        platform.cameras = <CameraDescription>[rearCamera];
+
+        final current = await session();
+
+        expect(current.description, rearCamera);
+      },
+    );
 
     test('fails with a CameraFailure when the device has no camera', () async {
       platform.cameras = <CameraDescription>[];

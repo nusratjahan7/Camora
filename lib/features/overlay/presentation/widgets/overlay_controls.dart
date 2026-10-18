@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/errors/app_exception.dart';
+import '../../../../core/haptics/haptics.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../shared/extensions/build_context_extensions.dart';
 import '../../../../shared/widgets/glass.dart';
@@ -87,7 +87,7 @@ class OverlayPickerButton extends ConsumerWidget {
           key: const ValueKey<String>('overlay-pick'),
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            HapticFeedback.selectionClick();
+            Haptics.selectionClick();
             pickReferenceImage(context, ref);
           },
           child: SizedBox.square(dimension: _size, child: face),
@@ -319,7 +319,7 @@ class _GrabHandle extends StatelessWidget {
           key: const ValueKey<String>('overlay-minimize'),
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            HapticFeedback.selectionClick();
+            Haptics.selectionClick();
             onTap();
           },
           child: SizedBox(
@@ -369,7 +369,7 @@ class _MinimizedChip extends ConsumerWidget {
           key: const ValueKey<String>('overlay-restore'),
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            HapticFeedback.selectionClick();
+            Haptics.selectionClick();
             restore();
           },
           onVerticalDragEnd: (details) {
@@ -558,7 +558,7 @@ class _FrameControls extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onTap: canReset
                     ? () {
-                        HapticFeedback.selectionClick();
+                        Haptics.selectionClick();
                         controller.resetPosition();
                       }
                     : null,
@@ -629,7 +629,7 @@ class _PresetChip extends StatelessWidget {
         onTap: onPressed == null
             ? null
             : () {
-                HapticFeedback.selectionClick();
+                Haptics.selectionClick();
                 onPressed!();
               },
         child: SizedBox(
